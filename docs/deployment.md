@@ -6,10 +6,12 @@ Railway builds and deploys the API from GitHub. CI is the gate: in the service s
 **Wait for CI** so a push to `main` deploys only after the `CI` workflow passes.
 
 1. Create a project from this repo and add a **Postgres** database.
-2. In the API service settings, keep the root directory as `/` and set the config file path to
-   `/apps/api/railway.json`. It builds `apps/api/Dockerfile`, health-checks `/health`, only
-   rebuilds when `apps/api`, `packages/shared` or the lockfile change, and pins one replica
-   ([ADR 0003](adr/0003-single-api-replica.md)).
+2. In the API service settings, keep the root directory as `/` and leave the build command, start
+   command and config file path empty. Railway reads the root [`railway.json`](../railway.json): it
+   builds `apps/api/Dockerfile`, health-checks `/health`, only rebuilds when `apps/api`,
+   `packages/shared` or the lockfile change, and pins one replica
+   ([ADR 0003](adr/0003-single-api-replica.md)). Set `PORT=3000` and use 3000 as the domain's
+   target port.
 3. Set variables: `DATABASE_URL=${{Postgres.DATABASE_URL}}`, `API_TOKEN`, `ENCRYPTION_KEY`
    (`pnpm secrets` prints fresh values), and optionally `RESEND_API_KEY`/`RESEND_FROM`. `PUBLIC_URL` defaults to the service's Railway domain.
 4. Generate a public domain. Point the runner and the desktop app at it with `LYFESTYLE_API_URL`.

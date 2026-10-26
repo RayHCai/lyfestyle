@@ -55,7 +55,7 @@ same key to `GROUPS` in `packages/client/src/client.ts` (a `satisfies` check fai
   integration credentials in `integrations/store.ts`, MCP server headers/env in
   `mcp-servers/service.ts`. Never return secret values from UI routes (`view()` returns names only);
   only `/agent/config` hands them to the runner.
-- Single replica (`railway.json` `numReplicas: 1`): `Notifier` is an in-process EventEmitter that
+- Single replica (root `railway.json` `numReplicas: 1`): `Notifier` is an in-process EventEmitter that
   drives run SSE streams and claim long-polls, and `startScheduler` ticks in-process. Do not add
   state that needs cross-instance coordination without replacing these.
 - Runs: `runs.enqueue(tx, ...)` inside the caller's transaction, then `runs.announce(...)` after it
