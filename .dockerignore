@@ -1,0 +1,10 @@
+**/node_modules
+**/dist
+**/.data
+.env
+.env.*
+.pnpm-store
+designs
+apps/desktop/src
+apps/desktop/src-tauri
+**/*.log

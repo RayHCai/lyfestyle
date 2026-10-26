@@ -1,0 +1,36 @@
+# Git hooks. `pnpm install` installs them (lefthook's postinstall); `pnpm exec lefthook install`
+# reinstalls. Skip once with `LEFTHOOK=0 git commit ...` only when you know CI will catch it.
+
+pre-commit:
+  jobs:
+    - name: guard
+      run: node scripts/hooks/check-staged.mjs {staged_files}
+    - name: format
+      glob: '*.{ts,tsx,js,mjs,cjs,json,md,yml,yaml,css,html}'
+      run: pnpm exec prettier --write --ignore-unknown {staged_files}
+      stage_fixed: true
+    - name: lint
+      glob: '*.{ts,tsx,js,mjs,cjs}'
+      run: pnpm exec oxlint --fix --deny-warnings {staged_files}
+      stage_fixed: true
+    - name: rustfmt
+      glob: 'apps/desktop/src-tauri/**/*.rs'
+      run: cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml
+      stage_fixed: true
+
+commit-msg:
+  jobs:
+    - name: conventional
+      run: node scripts/hooks/commit-msg.mjs {1}
+
+pre-push:
+  parallel: true
+  jobs:
+    - name: lint
+      run: pnpm lint
+    - name: format
+      run: pnpm format:check
+    - name: typecheck
+      run: pnpm typecheck
+    - name: test
+      run: pnpm test

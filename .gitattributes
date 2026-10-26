@@ -1,0 +1,11 @@
+# LF in the repo and in every checkout, matching .editorconfig and Prettier.
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
+*.icns binary
+*.woff2 binary
+
+pnpm-lock.yaml linguist-generated -diff
+apps/api/drizzle/meta/*.json linguist-generated
+Cargo.lock linguist-generated

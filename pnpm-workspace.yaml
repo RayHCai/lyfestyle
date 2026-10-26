@@ -1,0 +1,11 @@
+packages:
+  - apps/*
+  - packages/*
+
+minimumReleaseAge: 4320
+autoInstallPeers: true
+strictPeerDependencies: false
+
+allowBuilds:
+  esbuild: true
+  lefthook: true

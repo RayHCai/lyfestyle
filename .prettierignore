@@ -1,0 +1,5 @@
+# Prettier also skips everything in .gitignore.
+pnpm-lock.yaml
+apps/api/drizzle/
+apps/desktop/src-tauri/
+designs/

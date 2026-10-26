@@ -1,0 +1,27 @@
+{
+    "name": "@lyfestyle/runner",
+    "version": "0.0.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "start": "tsx --env-file-if-exists=../../.env src/index.ts",
+        "bridge": "node bin/lyfestyle-agent.mjs",
+        "typecheck": "tsc -p .",
+        "test": "vitest run"
+    },
+    "dependencies": {
+        "@anthropic-ai/claude-agent-sdk": "^0.3.0",
+        "@lyfestyle/client": "workspace:*",
+        "@lyfestyle/shared": "workspace:*",
+        "tsx": "^4.23.0"
+    },
+    "devDependencies": {
+        "@lyfestyle/api": "workspace:*",
+        "@types/node": "^22.20.0",
+        "typescript": "^7.0.0",
+        "vitest": "^5.0.0"
+    },
+    "bin": {
+        "lyfestyle-agent": "bin/lyfestyle-agent.mjs"
+    }
+}

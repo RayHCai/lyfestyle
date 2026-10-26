@@ -1,0 +1,21 @@
+{
+    "name": "@lyfestyle/shared",
+    "version": "0.0.0",
+    "private": true,
+    "type": "module",
+    "exports": {
+        ".": "./src/index.ts"
+    },
+    "scripts": {
+        "typecheck": "tsc -p .",
+        "test": "vitest run"
+    },
+    "dependencies": {
+        "zod": "^4.6.0"
+    },
+    "devDependencies": {
+        "@types/node": "^22.20.0",
+        "typescript": "^7.0.0",
+        "vitest": "^5.0.0"
+    }
+}

@@ -1,0 +1,23 @@
+{
+    "name": "@lyfestyle/client",
+    "version": "0.0.0",
+    "private": true,
+    "type": "module",
+    "exports": {
+        ".": "./src/index.ts"
+    },
+    "scripts": {
+        "typecheck": "tsc -p .",
+        "test": "vitest run"
+    },
+    "dependencies": {
+        "@lyfestyle/shared": "workspace:*",
+        "hono": "^4.13.0"
+    },
+    "devDependencies": {
+        "@lyfestyle/api": "workspace:*",
+        "@types/node": "^22.20.0",
+        "typescript": "^7.0.0",
+        "vitest": "^5.0.0"
+    }
+}

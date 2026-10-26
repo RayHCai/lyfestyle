@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  attribution:
+    name: No AI co-authors
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      # Same pattern as scripts/hooks/commit-msg.mjs, for commits made without the hooks.
+      - name: Commits and PR description credit no AI
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          pattern='^\s*(co-authored-by:.*(claude|anthropic)|.*generated with \[?claude)'
+          if git log --format=%B "$BASE..$HEAD" | grep -iqE "$pattern"; then
+            echo "::error::A commit credits Claude as a co-author. Remove the trailer (git rebase) and push again."
+            exit 1
+          fi
+          if printf '%s\n' "$PR_BODY" | grep -iqE "$pattern"; then
+            echo "::error::The PR description contains AI attribution. Edit it out."
+            exit 1
+          fi
+
+  check:
+    name: Lint, format, typecheck, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm exec oxlint --deny-warnings --format github
+      - name: Format
+        run: pnpm format:check
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Test
+        run: pnpm test
+      - name: Build
+        run: pnpm build
+      - name: Migrations match the schema
+        run: |
+          pnpm db:generate
+          git add --intent-to-add apps/api/drizzle
+          git diff --exit-code -- apps/api/drizzle || {
+            echo "::error::apps/api/src/db/schema.ts changed without a migration. Run pnpm db:generate and commit the result."
+            exit 1
+          }
+
+  rust:
+    name: Desktop (Rust)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter @lyfestyle/desktop...
+      # tauri::generate_context! embeds the built frontend, so it has to exist before clippy.
+      - run: pnpm --filter @lyfestyle/desktop build
+      - run: pnpm lint:rust
+
+  docker:
+    name: API image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
