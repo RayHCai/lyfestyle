@@ -1,6 +1,6 @@
 # Build from the repository root: the API bundles packages/shared out of the pnpm workspace.
 #   docker build -f apps/api/Dockerfile .
-FROM node:22-slim AS base
+FROM node:26-slim AS base
 RUN corepack enable && corepack prepare pnpm@11.1.2 --activate
 WORKDIR /app
 # Every workspace manifest, so pnpm sees the same workspace the lockfile was written for.
@@ -21,7 +21,7 @@ RUN pnpm --filter @lyfestyle/api build
 FROM base AS deps
 RUN pnpm install --frozen-lockfile --prod --filter @lyfestyle/api...
 
-FROM node:22-slim
+FROM node:26-slim
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=deps /app/node_modules node_modules
