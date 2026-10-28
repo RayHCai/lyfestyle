@@ -65,22 +65,29 @@ jobs:
       - name: Migrations match the schema
         run: |
           pnpm db:generate
-          git add --intent-to-add apps/api/drizzle
-          git diff --exit-code -- apps/api/drizzle || {
-            echo "::error::apps/api/src/db/schema.ts changed without a migration. Run pnpm db:generate and commit the result."
+          git add --intent-to-add apps/api/prisma/migrations
+          git diff --exit-code -- apps/api/prisma/migrations || {
+            echo "::error::apps/api/prisma/schema.prisma changed without a migration. Run pnpm db:generate and commit the result."
             exit 1
           }
 
   rust:
-    name: Desktop (Rust)
-    runs-on: ubuntu-latest
+    name: Desktop (Rust, ${{ matrix.os }})
+    # Windows compiles and lints the #[cfg(windows)] code (taskkill, mklink, CREATE_NO_WINDOW) that
+    # the app actually ships; Linux keeps the crate building elsewhere.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - name: Tauri system dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -96,6 +103,7 @@ jobs:
       # tauri::generate_context! embeds the built frontend, so it has to exist before clippy.
       - run: pnpm --filter @lyfestyle/desktop build
       - run: pnpm lint:rust
+      - run: pnpm test:rust
 
   docker:
     name: API image

@@ -1,38 +1,92 @@
 # Builds the Windows installer and attaches it to a draft GitHub release.
-# Trigger: push a tag like `desktop-v0.2.0` (match apps/desktop/src-tauri/tauri.conf.json's version).
+# Trigger: push a tag like `desktop-v0.2.0`, matching the version in
+# apps/desktop/src-tauri/tauri.conf.json and Cargo.toml, or run it by hand and name an existing tag.
 name: Release desktop
 
 on:
   push:
     tags: ['desktop-v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to release, e.g. desktop-v0.2.0
+        required: true
+        type: string
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  # A manual run's ref is a branch; only the tag names the release.
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
+  check:
+    name: Lint, format, typecheck, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Tag is a desktop release
+        run: |
+          case "$TAG" in
+            desktop-v*) ;;
+            *) echo "::error::$TAG is not a desktop-v* tag"; exit 1 ;;
+          esac
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          persist-credentials: false
+      - name: Tag matches the app version
+        run: |
+          version=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
+          if [ "$TAG" != "desktop-v$version" ]; then
+            echo "::error::$TAG does not match tauri.conf.json's version $version"
+            exit 1
+          fi
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+
   build:
+    name: Windows installer
+    needs: check
     runs-on: windows-latest
     timeout-minutes: 45
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: apps/desktop/src-tauri
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
       - uses: actions/setup-node@v5
         with:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile --filter @lyfestyle/desktop...
-      - uses: tauri-apps/tauri-action@v0
+      # tauri::generate_context! embeds the built frontend, so it has to exist before clippy.
+      - run: pnpm --filter @lyfestyle/desktop build
+      - run: pnpm lint:rust
+      - run: pnpm test:rust
+      - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: apps/desktop
           tauriScript: pnpm tauri
-          tagName: ${{ github.ref_name }}
-          releaseName: Lyfestyle ${{ github.ref_name }}
+          tagName: ${{ env.TAG }}
+          releaseName: Lyfestyle ${{ env.TAG }}
           releaseDraft: true
           prerelease: false

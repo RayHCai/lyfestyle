@@ -1,10 +1,12 @@
+.git
 **/node_modules
 **/dist
 **/.data
-.env
-.env.*
+**/.env*
 .pnpm-store
 designs
 apps/desktop/src
 apps/desktop/src-tauri
+# Generated in the build stage; a local copy would overwrite the freshly generated client.
+apps/api/src/db/generated
 **/*.log

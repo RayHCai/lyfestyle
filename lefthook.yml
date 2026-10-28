@@ -13,9 +13,11 @@ pre-commit:
       glob: '*.{ts,tsx,js,mjs,cjs}'
       run: pnpm exec oxlint --fix --deny-warnings {staged_files}
       stage_fixed: true
+    # Only the staged files, so unstaged Rust edits elsewhere are not reformatted. rustfmt reads
+    # apps/desktop/src-tauri/rustfmt.toml next to them.
     - name: rustfmt
       glob: 'apps/desktop/src-tauri/**/*.rs'
-      run: cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml
+      run: rustfmt --edition 2021 {staged_files}
       stage_fixed: true
 
 commit-msg:

@@ -73,8 +73,7 @@
         "**/node_modules/**",
         "**/dist/**",
         "**/.data/**",
-        "apps/api/drizzle/**",
-        "apps/desktop/src-tauri/**",
-        "designs/**"
+        "apps/api/src/db/generated/**",
+        "apps/desktop/src-tauri/**"
     ]
 }

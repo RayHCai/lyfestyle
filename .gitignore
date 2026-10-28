@@ -1,8 +1,11 @@
 node_modules
 dist
 .env
-.env.local
+.env.*
+!.env.example
+.envrc
 .data/
+apps/api/src/db/generated/
 *.tsbuildinfo
 .DS_Store
 *.log

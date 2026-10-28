@@ -10,6 +10,7 @@ updates:
     groups:
       minor-and-patch:
         update-types: [minor, patch]
+    # `include: scope` writes build(deps) or build(deps-dev); scripts/hooks/commit-msg.mjs allows both.
     commit-message:
       prefix: build
       include: scope
@@ -31,6 +32,8 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    cooldown:
+      default-days: 3
     commit-message:
       prefix: ci
 
@@ -38,6 +41,8 @@ updates:
     directory: /apps/api
     schedule:
       interval: monthly
+    cooldown:
+      default-days: 3
     commit-message:
       prefix: build
       include: scope

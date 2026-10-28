@@ -27,7 +27,19 @@ const TYPES = [
     'chore',
     'revert',
 ];
-const SCOPES = ['api', 'runner', 'desktop', 'client', 'shared', 'deps', 'ci', 'docs', 'repo'];
+// `deps-dev` is what Dependabot's `include: scope` writes for dev dependencies.
+const SCOPES = [
+    'api',
+    'runner',
+    'desktop',
+    'client',
+    'shared',
+    'deps',
+    'deps-dev',
+    'ci',
+    'docs',
+    'repo',
+];
 
 const subject = cleaned.split('\n').find((line) => line.trim() && !line.startsWith('#'));
 

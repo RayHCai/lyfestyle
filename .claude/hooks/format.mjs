@@ -4,11 +4,9 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { extname } from 'node:path';
 
-const input = JSON.parse(readFileSync(0, 'utf8'));
-const file = input.tool_input?.file_path;
-if (!file) process.exit(0);
-
 try {
+    const file = JSON.parse(readFileSync(0, 'utf8')).tool_input?.file_path;
+    if (!file) process.exit(0);
     if (extname(file) === '.rs') {
         spawnSync('rustfmt', ['--edition', '2021', file], { stdio: 'ignore' });
     } else {
@@ -24,5 +22,6 @@ try {
         }
     }
 } catch {
-    // Unparseable mid-edit files are left alone; `pnpm check` reports them.
+    // Unreadable hook input and unparseable mid-edit files are left alone; `pnpm check` reports
+    // the files.
 }

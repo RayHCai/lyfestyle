@@ -7,5 +7,4 @@
 *.woff2 binary
 
 pnpm-lock.yaml linguist-generated -diff
-apps/api/drizzle/meta/*.json linguist-generated
 Cargo.lock linguist-generated
