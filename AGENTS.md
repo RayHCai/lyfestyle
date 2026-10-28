@@ -5,7 +5,7 @@ invariants and test patterns; read the one for the package you are changing befo
 
 | Package        | Guide                                            | Stack                                   |
 | -------------- | ------------------------------------------------ | --------------------------------------- |
-| `apps/api`     | [apps/api/AGENTS.md](apps/api/AGENTS.md)         | Hono, Drizzle, Postgres/PGlite, MCP SDK |
+| `apps/api`     | [apps/api/AGENTS.md](apps/api/AGENTS.md)         | Hono, Prisma, Postgres, MCP SDK         |
 | `apps/runner`  | [apps/runner/AGENTS.md](apps/runner/AGENTS.md)   | Node, Claude Agent SDK                  |
 | `apps/desktop` | [apps/desktop/AGENTS.md](apps/desktop/AGENTS.md) | Tauri 2 (Rust), React 19, Vite, Zustand |
 | `packages/*`   | [packages/AGENTS.md](packages/AGENTS.md)         | Shared protocol and typed client        |
@@ -23,7 +23,7 @@ pnpm check                          # lint + format:check + typecheck + test. Ru
 pnpm lint:fix && pnpm format        # fix what can be fixed automatically
 pnpm --filter @lyfestyle/api test   # one package; add `-- tests/pages.test.ts` for one file
 pnpm lint:rust                      # only after touching apps/desktop/src-tauri
-pnpm db:generate                    # after any change to apps/api/src/db/schema.ts
+pnpm db:generate                    # after any change to apps/api/prisma/schema.prisma
 ```
 
 Tests use in-memory PGlite and fakes. They need no running services and no network.
@@ -52,8 +52,10 @@ allowed types and scopes. Hooks format, lint and guard staged files; do not bypa
   to `.env.example` with a comment, and to `apps/api/src/config.ts` or `apps/runner/src/env.ts`.
 - **Never run the real agent in tests or scripts.** Runs spend the user's Claude usage. Use the fake
   harness / fake runner patterns already in the tests.
-- **Never hand-edit `apps/api/drizzle/`.** Change `schema.ts`, run `pnpm db:generate`, commit both.
-  CI fails if the schema and migrations disagree.
+- **Never hand-edit applied migrations in `apps/api/prisma/migrations/`.** Change `schema.prisma`, run
+  `pnpm db:generate`, commit both. CI fails if the schema and migrations disagree. Never run
+  `prisma migrate dev` or `db push`: `.env`'s `DATABASE_URL` may be production
+  ([ADR 0005](docs/adr/0005-prisma.md)).
 - **Contracts that cross packages** change in one commit with all their consumers:
     - the run-event protocol in `packages/shared/src/run-events.ts` (API, runner, client, desktop)
     - API routes, which type `@lyfestyle/client`, and the desktop's own client in
@@ -83,15 +85,16 @@ Prettier and oxlint enforce formatting and most rules; these are the conventions
 
 ## Glossary
 
-| Term             | Meaning                                                                                |
-| ---------------- | -------------------------------------------------------------------------------------- |
-| Page             | A markdown document. Links to other pages as `[label](page:<uuid>)`.                   |
-| Conversation     | A chat thread with the agent. Holds messages and a Claude Code session to resume.      |
-| Job / automation | A cron schedule plus a prompt. When due, it queues a run.                              |
-| Run              | One unit of agent work, queued by a message or a job and claimed by a runner.          |
-| Run event        | A message, log, usage, session or status record that a runner posts for a run.         |
-| Runner           | The local worker that claims runs and executes them through a harness.                 |
-| Harness          | The thing that actually runs the agent: Claude Code, or any stream-json command.       |
-| Tool             | A capability exposed to the agent via MCP at `/mcp` and as HTTP at `/tools/:name`.     |
-| Integration      | A connected external account: Canvas, Resend. Gmail/Calendar are claude.ai connectors. |
-| Bridge           | `lyfestyle-agent.mjs`: the desktop app's `LYFESTYLE_AGENT_COMMAND` backed by the API.  |
+| Term         | Meaning                                                                                 |
+| ------------ | --------------------------------------------------------------------------------------- |
+| Page         | A markdown document. Links to other pages as `[label](page:<uuid>)`.                    |
+| Conversation | A chat thread with the agent. Holds messages and a Claude Code session to resume.       |
+| Automation   | Approved code the API runs on a cron schedule; changes arrive as deploys to approve.    |
+| Deploy       | A proposed new automation or version, from the agent. Runs only once the user approves. |
+| Run          | One unit of agent work, queued by a message or automation code; capped at $5.           |
+| Run event    | A message, log, usage, session or status record that a runner posts for a run.          |
+| Runner       | The local worker that claims runs and executes them through a harness.                  |
+| Harness      | The thing that actually runs the agent: Claude Code, or any stream-json command.        |
+| Tool         | A capability exposed to the agent via MCP at `/mcp` and as HTTP at `/tools/:name`.      |
+| Integration  | A connected external account: Canvas, Resend. Gmail/Calendar are claude.ai connectors.  |
+| Bridge       | `lyfestyle-agent.mjs`: the desktop app's `LYFESTYLE_AGENT_COMMAND` backed by the API.   |

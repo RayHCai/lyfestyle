@@ -12,8 +12,8 @@ flowchart LR
     end
 
     subgraph railway["Railway"]
-        api["apps/api<br/>Hono + Drizzle"]
-        db[("Postgres<br/>PGlite locally")]
+        api["apps/api<br/>Hono + Prisma"]
+        db[("Postgres")]
     end
 
     ext["Canvas · Resend<br/>registered MCP servers"]

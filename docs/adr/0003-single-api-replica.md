@@ -6,7 +6,7 @@
 ## Context
 
 The cron scheduler, long-poll wakeups for `/runs/claim`, and SSE fan-out for run streams all live in
-process memory (`apps/api/src/lib/notifier.ts`, `apps/api/src/agent/scheduler.ts`). This is a
+process memory (`apps/api/src/lib/notifier.ts`, `apps/api/src/scheduler.ts`). This is a
 single-user app; one small instance has ample headroom.
 
 ## Decision
