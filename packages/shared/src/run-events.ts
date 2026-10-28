@@ -21,7 +21,7 @@ export type ContentBlock = z.infer<typeof contentBlock>;
 export const messageRole = z.enum(['user', 'assistant', 'tool']);
 export type MessageRole = z.infer<typeof messageRole>;
 
-export const runKind = z.enum(['chat', 'job']);
+export const runKind = z.enum(['chat', 'automation']);
 export type RunKind = z.infer<typeof runKind>;
 
 export const runStatus = z.enum(['queued', 'running', 'succeeded', 'failed', 'cancelled']);
@@ -31,7 +31,15 @@ export const TERMINAL_RUN_STATUSES: readonly RunStatus[] = ['succeeded', 'failed
 
 export const logLevel = z.enum(['debug', 'info', 'warn', 'error']);
 
-const tokens = z.number().int().nonnegative();
+/** Largest count the API can store: its token and duration columns are Postgres int4. */
+export const INT4_MAX = 2_147_483_647;
+
+/** Capped rather than rejected: one absurd figure must not fail a whole batch of events. */
+const tokens = z
+    .number()
+    .int()
+    .nonnegative()
+    .transform((n) => Math.min(n, INT4_MAX));
 
 /** An event a harness reports while it executes a run. */
 export const runEventInput = z.discriminatedUnion('type', [
@@ -59,7 +67,7 @@ export const runEventInput = z.discriminatedUnion('type', [
         cacheReadTokens: tokens,
         cacheWriteTokens: tokens,
         costUsd: z.number().nonnegative(),
-        durationMs: z.number().int().nonnegative().optional(),
+        durationMs: tokens.optional(),
         /** The harness session that spent it, so a resumed session's totals can be differenced. */
         sessionId: z.string().min(1).optional(),
     }),

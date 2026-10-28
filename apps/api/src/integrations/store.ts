@@ -1,11 +1,7 @@
-import { eq } from 'drizzle-orm';
-import type { Db } from '../db/client.js';
-import { integrations } from '../db/schema.js';
+import type { Db, Prisma, Provider } from '../db/client.js';
 import type { SecretBox } from '../lib/crypto.js';
 
-export type Provider = (typeof integrations.$inferSelect)['provider'];
-
-export interface StoredIntegration<S> {
+interface StoredIntegration<S> {
     account: string | null;
     config: Record<string, unknown>;
     secret: S;
@@ -18,10 +14,7 @@ export type IntegrationStore = ReturnType<typeof createIntegrationStore>;
 export function createIntegrationStore(db: Db, secrets: SecretBox, now: () => Date) {
     return {
         async get<S>(provider: Provider): Promise<StoredIntegration<S> | undefined> {
-            const [row] = await db
-                .select()
-                .from(integrations)
-                .where(eq(integrations.provider, provider));
+            const row = await db.integration.findUnique({ where: { provider } });
             if (!row) return undefined;
             return {
                 account: row.account,
@@ -35,37 +28,35 @@ export function createIntegrationStore(db: Db, secrets: SecretBox, now: () => Da
             provider: Provider,
             value: { account: string | null; config: Record<string, unknown>; secret: S },
         ) {
-            const row = { ...value, secret: secrets.seal(value.secret), updatedAt: now() };
-            await db
-                .insert(integrations)
-                .values({ provider, ...row, createdAt: now() })
-                .onConflictDoUpdate({ target: integrations.provider, set: row });
+            const row = {
+                account: value.account,
+                config: value.config as Prisma.InputJsonObject,
+                secret: secrets.seal(value.secret),
+                updatedAt: now(),
+            };
+            await db.integration.upsert({
+                where: { provider },
+                create: { provider, ...row, createdAt: now() },
+                update: row,
+            });
         },
 
         async remove(provider: Provider): Promise<boolean> {
-            const rows = await db
-                .delete(integrations)
-                .where(eq(integrations.provider, provider))
-                .returning({ provider: integrations.provider });
-            return rows.length > 0;
+            const { count } = await db.integration.deleteMany({ where: { provider } });
+            return count > 0;
         },
 
         /** Which providers are connected, without decrypting anything. */
         async connected(): Promise<Set<Provider>> {
-            const rows = await db.select({ provider: integrations.provider }).from(integrations);
+            const rows = await db.integration.findMany({ select: { provider: true } });
             return new Set(rows.map((r) => r.provider));
         },
 
-        async describe(provider: Provider) {
-            const [row] = await db
-                .select({
-                    account: integrations.account,
-                    config: integrations.config,
-                    updatedAt: integrations.updatedAt,
-                })
-                .from(integrations)
-                .where(eq(integrations.provider, provider));
-            return row ?? null;
+        describe(provider: Provider) {
+            return db.integration.findUnique({
+                where: { provider },
+                select: { account: true, config: true, updatedAt: true },
+            });
         },
     };
 }

@@ -22,3 +22,20 @@ export async function windowAction(action: 'minimize' | 'maximize' | 'close') {
     else if (action === 'maximize') await w.toggleMaximize();
     else await w.close();
 }
+
+/**
+ * Takes `url` out of the app; the webview itself never navigates away. A browser opens it in a
+ * new tab. The desktop app has no opener command yet, so it copies the URL for the user to paste
+ * into a browser instead.
+ */
+export async function openExternal(url: string): Promise<'opened' | 'copied'> {
+    if (!isTauri) {
+        window.open(url, '_blank', 'noopener,noreferrer');
+        return 'opened';
+    }
+    await navigator.clipboard.writeText(url);
+    return 'copied';
+}
+
+/** The hosted web build (`vite --mode web`): API mode only, no agent, nothing kept offline. */
+export const isWeb = import.meta.env.MODE === 'web';

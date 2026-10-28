@@ -3,21 +3,10 @@ import { z } from 'zod';
 import { validate } from '../lib/validate.js';
 import type { Services } from '../services.js';
 
-export const integrationsRoutes = ({ integrations, canvas, resend }: Services) =>
+export const integrationsRoutes = ({ integrations, canvas }: Services) =>
     new Hono()
         .basePath('/integrations')
-        .get('/', async (c) => {
-            const cv = await integrations.describe('canvas');
-            return c.json({
-                canvas: {
-                    connected: cv !== null,
-                    account: cv?.account ?? null,
-                    baseUrl: (cv?.config.baseUrl as string | undefined) ?? null,
-                    updatedAt: cv?.updatedAt ?? null,
-                },
-                resend: { configured: resend.configured, from: resend.from },
-            });
-        })
+        .get('/', async (c) => c.json(await integrations.status()))
         .put(
             '/canvas',
             validate('json', z.object({ baseUrl: z.url(), token: z.string().trim().min(10) })),

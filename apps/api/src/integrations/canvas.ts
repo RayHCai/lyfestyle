@@ -1,8 +1,9 @@
-import { badRequest, unavailable, upstream } from '../lib/errors.js';
+import { ApiError, badRequest, unavailable, unreachable, upstream } from '../lib/errors.js';
 import { htmlToText, truncate } from '../lib/html.js';
 import type { IntegrationStore } from './store.js';
 
 const MAX_PAGES = 5;
+const TIMEOUT_MS = 15_000;
 
 interface CanvasSecret {
     token: string;
@@ -27,11 +28,9 @@ function nextLink(header: string | null): string | null {
     return null;
 }
 
-export function normalizeCanvasUrl(raw: string): string {
+function normalizeCanvasUrl(raw: string): string {
     const url = new URL(raw);
-    if (url.protocol !== 'https:' && url.hostname !== 'localhost') {
-        throw badRequest('Canvas URL must use https');
-    }
+    if (url.protocol !== 'https:') throw badRequest('Canvas URL must use https');
     return url.origin;
 }
 
@@ -42,6 +41,19 @@ type Json = any;
 export type Canvas = ReturnType<typeof createCanvas>;
 
 export function createCanvas(deps: { store: IntegrationStore; fetch: typeof fetch }) {
+    async function fetchText(url: string, token: string) {
+        try {
+            const res = await deps.fetch(url, {
+                headers: { authorization: `Bearer ${token}` },
+                signal: AbortSignal.timeout(TIMEOUT_MS),
+            });
+            return { res, text: await res.text() };
+        } catch (err) {
+            throw unreachable('Canvas', err);
+        }
+    }
+
+    /** GETs `path`, following up to MAX_PAGES `next` links for a list. */
     async function call(
         baseUrl: string,
         token: string,
@@ -52,14 +64,28 @@ export function createCanvas(deps: { store: IntegrationStore; fetch: typeof fetc
         let url: string | null = `${baseUrl}/api/v1${path}${qs ? `?${qs}` : ''}`;
         const items: Json[] = [];
         for (let page = 0; url && page < MAX_PAGES; page++) {
-            const res: Response = await deps.fetch(url, {
-                headers: { authorization: `Bearer ${token}` },
-            });
-            if (!res.ok) throw upstream('Canvas', res.status, await res.text());
-            const body: Json = await res.json();
+            const { res, text } = await fetchText(url, token);
+            if (res.status === 401) throw unavailable('Canvas rejected the access token');
+            if (!res.ok) throw upstream('Canvas', res.status, text);
+            let body: Json;
+            try {
+                body = JSON.parse(text);
+            } catch {
+                // e.g. a login page from an SSO proxy in front of Canvas.
+                throw new ApiError(
+                    502,
+                    'upstream_error',
+                    'Canvas answered with something other than JSON',
+                    {
+                        body: text.slice(0, 2000),
+                    },
+                );
+            }
             if (!Array.isArray(body)) return body;
             items.push(...body);
-            url = nextLink(res.headers.get('link'));
+            const next = nextLink(res.headers.get('link'));
+            // The token travels with every page, so never follow a link off the Canvas host.
+            url = next && URL.canParse(next) && new URL(next).origin === baseUrl ? next : null;
         }
         return items;
     }
@@ -87,16 +113,16 @@ export function createCanvas(deps: { store: IntegrationStore; fetch: typeof fetc
         /** Checks the token against Canvas before storing it. */
         async connect(rawUrl: string, token: string) {
             const baseUrl = normalizeCanvasUrl(rawUrl);
-            const res = await deps.fetch(`${baseUrl}/api/v1/users/self`, {
-                headers: { authorization: `Bearer ${token}` },
-            });
-            if (res.status === 401) throw badRequest('Canvas rejected that access token');
-            if (!res.ok) throw upstream('Canvas', res.status, await res.text());
-            const user = (await res.json()) as { id: number; name?: string; login_id?: string };
+            const user = (await call(baseUrl, token, '/users/self').catch((err: unknown) => {
+                // Here a rejected token is the one just typed in, not a stored one gone stale.
+                throw err instanceof ApiError && err.code === 'integration_unavailable'
+                    ? badRequest('Canvas rejected that access token')
+                    : err;
+            })) as { id: number; name?: string; login_id?: string };
             const account = user.name ?? user.login_id ?? String(user.id);
             await deps.store.put<CanvasSecret>('canvas', {
                 account,
-                config: { baseUrl, userId: user.id },
+                config: { baseUrl },
                 secret: { token },
             });
             return { account, baseUrl };

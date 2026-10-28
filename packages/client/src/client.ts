@@ -1,4 +1,5 @@
 import type { RouteGroups } from '@lyfestyle/api';
+import { trimTrailingSlashes } from '@lyfestyle/shared';
 import { hc, type ClientResponse } from 'hono/client';
 import type { SuccessStatusCode } from 'hono/utils/http-status';
 
@@ -23,7 +24,8 @@ const GROUPS = {
     goals: true,
     conversations: true,
     runs: true,
-    jobs: true,
+    automations: true,
+    notifications: true,
     usage: true,
     metrics: true,
     integrations: true,
@@ -35,7 +37,7 @@ const GROUPS = {
 
 /** A typed client for every API route: `api.pages.$get(...)`, `api.runs[':id'].$get(...)`. */
 export function createApiClient(options: ClientOptions): ApiClient {
-    const root = hc(options.baseUrl.replace(/\/+$/, ''), {
+    const root = hc(trimTrailingSlashes(options.baseUrl), {
         headers: { authorization: `Bearer ${options.token}` },
         ...(options.fetch ? { fetch: options.fetch } : {}),
     }) as unknown as Record<string, unknown>;

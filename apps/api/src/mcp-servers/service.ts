@@ -1,20 +1,18 @@
-import { asc, eq } from 'drizzle-orm';
-import type { Db } from '../db/client.js';
-import { mcpServers } from '../db/schema.js';
+import type { Db, McpTransport, Row } from '../db/client.js';
 import type { SecretBox } from '../lib/crypto.js';
-import { badRequest, conflict, notFound } from '../lib/errors.js';
+import { badRequest, conflict, notFound, onDuplicate } from '../lib/errors.js';
 import type { Patch } from '../lib/types.js';
-
-export type McpTransport = 'http' | 'sse' | 'stdio';
 
 /** The API's own tool server; the runner adds it to every run under this name. */
 export const BUILTIN_MCP_SERVER = 'lyfestyle';
 
-export interface McpServerInput {
+interface McpServerInput {
     name: string;
     transport: McpTransport;
+    /** May carry a secret in its path or query (e.g. a token), so it is stored encrypted. */
     url?: string | null | undefined;
     command?: string | null | undefined;
+    /** May carry secrets too; stored encrypted. */
     args?: string[] | undefined;
     /** Sent with every request to an http or sse server; stored encrypted. */
     headers?: Record<string, string> | undefined;
@@ -23,14 +21,25 @@ export interface McpServerInput {
     enabled?: boolean | undefined;
 }
 
+/** The sealed `secret` column. Rows written before url and args moved in lack those two. */
 interface McpSecret {
+    url?: string | null;
+    args?: string[];
     headers: Record<string, string>;
     env: Record<string, string>;
 }
 
-type Row = typeof mcpServers.$inferSelect;
+type Secrets = Required<McpSecret>;
 
-export type McpServersService = ReturnType<typeof createMcpServersService>;
+type McpRow = Row<'mcpServer'>;
+
+/** Scheme and host, plus "/…" when a path or query is hidden; never userinfo. */
+function displayUrl(raw: string | null): string | null {
+    if (!raw || !URL.canParse(raw)) return null;
+    const url = new URL(raw);
+    const hidden = url.pathname !== '/' || url.search !== '' || url.hash !== '';
+    return `${url.protocol}//${url.host}${hidden ? '/…' : ''}`;
+}
 
 export function createMcpServersService(deps: { db: Db; secrets: SecretBox; now: () => Date }) {
     const { db, secrets, now } = deps;
@@ -47,43 +56,68 @@ export function createMcpServersService(deps: { db: Db; secrets: SecretBox; now:
         }
     }
 
-    /** What the UI may show: header and variable names, never their values. */
-    function view(row: Row) {
-        const secret = secrets.open<McpSecret>(row.secret);
+    /** The url and args columns hold only what is safe to show; the real ones are sealed. */
+    function columns(transport: McpTransport, value: Secrets) {
+        return {
+            url: transport === 'stdio' ? null : displayUrl(value.url),
+            args: [],
+            secret: secrets.seal(value),
+        };
+    }
+
+    /**
+     * The row's secrets, or null once they cannot be decrypted (ENCRYPTION_KEY changed). A row
+     * from before url and args were sealed is moved to the sealed form on the way.
+     */
+    async function unseal(row: McpRow): Promise<Secrets | null> {
+        let stored: McpSecret;
+        try {
+            stored = secrets.open<McpSecret>(row.secret);
+        } catch {
+            return null;
+        }
+        if (stored.url !== undefined && stored.args !== undefined) return stored as Secrets;
+        const upgraded = { ...stored, url: row.url, args: row.args };
+        // Conditional on the old blob, so a write that landed meanwhile is not overwritten.
+        await db.mcpServer.updateMany({
+            where: { id: row.id, secret: row.secret },
+            data: columns(row.transport, upgraded),
+        });
+        return upgraded;
+    }
+
+    /** What the UI may show: header and variable names and an argument count, never values. */
+    async function view(row: McpRow) {
+        const value = await unseal(row);
         return {
             id: row.id,
             name: row.name,
             transport: row.transport,
-            url: row.url,
+            url: row.transport === 'stdio' ? null : displayUrl(row.url),
             command: row.command,
-            args: row.args,
-            headerNames: Object.keys(secret.headers),
-            envNames: Object.keys(secret.env),
+            argCount: value?.args.length ?? 0,
+            headerNames: Object.keys(value?.headers ?? {}),
+            envNames: Object.keys(value?.env ?? {}),
             enabled: row.enabled,
+            /** The secrets were sealed with another ENCRYPTION_KEY: delete and re-add it. */
+            secretsUnavailable: value === null,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
         };
     }
 
-    async function find(id: string): Promise<Row> {
-        const [row] = await db.select().from(mcpServers).where(eq(mcpServers.id, id));
+    async function find(id: string): Promise<McpRow> {
+        const row = await db.mcpServer.findUnique({ where: { id } });
         if (!row) throw notFound('MCP server');
         return row;
     }
 
-    async function unique(name: string, id?: string) {
-        const [clash] = await db
-            .select({ id: mcpServers.id })
-            .from(mcpServers)
-            .where(eq(mcpServers.name, name));
-        if (clash && clash.id !== id)
-            throw conflict(`An MCP server named "${name}" already exists`);
-    }
+    const duplicate = (name: string) => onDuplicate(`An MCP server named "${name}" already exists`);
 
     return {
         async list() {
-            const rows = await db.select().from(mcpServers).orderBy(asc(mcpServers.name));
-            return rows.map(view);
+            const rows = await db.mcpServer.findMany({ orderBy: { name: 'asc' } });
+            return Promise.all(rows.map(view));
         },
 
         async get(id: string) {
@@ -92,83 +126,115 @@ export function createMcpServersService(deps: { db: Db; secrets: SecretBox; now:
 
         async create(input: McpServerInput) {
             check(input);
-            await unique(input.name);
-            const [row] = await db
-                .insert(mcpServers)
-                .values({
-                    name: input.name,
-                    transport: input.transport,
-                    url: input.transport === 'stdio' ? null : (input.url ?? null),
-                    command: input.transport === 'stdio' ? (input.command ?? null) : null,
-                    args: input.args ?? [],
-                    secret: secrets.seal({ headers: input.headers ?? {}, env: input.env ?? {} }),
-                    enabled: input.enabled ?? true,
-                    createdAt: now(),
-                    updatedAt: now(),
+            const stdio = input.transport === 'stdio';
+            const row = await db.mcpServer
+                .create({
+                    data: {
+                        name: input.name,
+                        transport: input.transport,
+                        command: stdio ? (input.command ?? null) : null,
+                        ...columns(input.transport, {
+                            url: stdio ? null : (input.url ?? null),
+                            args: stdio ? (input.args ?? []) : [],
+                            headers: input.headers ?? {},
+                            env: input.env ?? {},
+                        }),
+                        enabled: input.enabled ?? true,
+                        createdAt: now(),
+                        updatedAt: now(),
+                    },
                 })
-                .returning();
-            return view(row!);
+                .catch(duplicate(input.name));
+            return view(row);
         },
 
-        /** `headers` and `env`, when given, replace the stored ones wholesale. */
+        /**
+         * `headers`, `env` and `args`, when given, replace the stored ones wholesale. Switching
+         * transport drops what the new one cannot use, as `create` does.
+         */
         async update(id: string, patch: Patch<McpServerInput>) {
             const current = await find(id);
-            const stored = secrets.open<McpSecret>(current.secret);
+            const stored = await unseal(current);
+            if (!stored) {
+                throw conflict(
+                    'Its secrets were sealed with another ENCRYPTION_KEY; delete and re-add it',
+                );
+            }
+            const transport = patch.transport ?? current.transport;
+            const stdio = transport === 'stdio';
             const next = {
                 name: patch.name ?? current.name,
-                transport: patch.transport ?? current.transport,
-                url: patch.url === undefined ? current.url : patch.url,
-                command: patch.command === undefined ? current.command : patch.command,
+                transport,
+                url: stdio ? null : patch.url === undefined ? stored.url : patch.url,
+                command: !stdio
+                    ? null
+                    : patch.command === undefined
+                      ? current.command
+                      : patch.command,
             };
             check(next);
-            await unique(next.name, id);
-            const [row] = await db
-                .update(mcpServers)
-                .set({
-                    ...next,
-                    args: patch.args ?? current.args,
-                    enabled: patch.enabled ?? current.enabled,
-                    secret: secrets.seal({
-                        headers: patch.headers ?? stored.headers,
-                        env: patch.env ?? stored.env,
-                    }),
-                    updatedAt: now(),
+            const row = await db.mcpServer
+                .update({
+                    where: { id },
+                    data: {
+                        name: next.name,
+                        transport,
+                        command: next.command,
+                        ...columns(transport, {
+                            url: next.url,
+                            args: stdio ? (patch.args ?? stored.args) : [],
+                            headers: patch.headers ?? stored.headers,
+                            env: patch.env ?? stored.env,
+                        }),
+                        enabled: patch.enabled ?? current.enabled,
+                        updatedAt: now(),
+                    },
                 })
-                .where(eq(mcpServers.id, id))
-                .returning();
-            return view(row!);
+                .catch(duplicate(next.name));
+            return view(row);
         },
 
+        /** Works even when the secrets can no longer be decrypted, so such a row can go. */
         async remove(id: string) {
             const row = await find(id);
-            await db.delete(mcpServers).where(eq(mcpServers.id, id));
-            return view(row);
+            const shown = await view(row);
+            await db.mcpServer.delete({ where: { id } });
+            return shown;
         },
 
         /** Enabled servers with their secrets, for a harness to connect to. */
         async forAgent() {
-            const rows = await db
-                .select()
-                .from(mcpServers)
-                .where(eq(mcpServers.enabled, true))
-                .orderBy(asc(mcpServers.name));
-            return rows.map((row) => {
-                const secret = secrets.open<McpSecret>(row.secret);
-                return row.transport === 'stdio'
-                    ? {
-                          name: row.name,
-                          transport: row.transport,
-                          command: row.command!,
-                          args: row.args,
-                          env: secret.env,
-                      }
-                    : {
-                          name: row.name,
-                          transport: row.transport,
-                          url: row.url!,
-                          headers: secret.headers,
-                      };
+            const rows = await db.mcpServer.findMany({
+                where: { enabled: true },
+                orderBy: { name: 'asc' },
             });
+            const servers = [];
+            for (const row of rows) {
+                const value = await unseal(row);
+                if (!value) {
+                    console.warn(
+                        `MCP server "${row.name}" skipped: its secrets cannot be decrypted`,
+                    );
+                    continue;
+                }
+                servers.push(
+                    row.transport === 'stdio'
+                        ? {
+                              name: row.name,
+                              transport: row.transport,
+                              command: row.command!,
+                              args: value.args,
+                              env: value.env,
+                          }
+                        : {
+                              name: row.name,
+                              transport: row.transport,
+                              url: value.url!,
+                              headers: value.headers,
+                          },
+                );
+            }
+            return servers;
         },
     };
 }

@@ -1,22 +1,43 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { HTTPException } from 'hono/http-exception';
-import { conversationsRoutes, jobsRoutes, runsRoutes, usageRoutes } from './agent/routes.js';
+import { conversationsRoutes, runsRoutes, usageRoutes } from './agent/routes.js';
+import { automationsRoutes } from './automations/routes.js';
 import { integrationsRoutes } from './integrations/routes.js';
 import { safeEqual } from './lib/crypto.js';
-import { ApiError } from './lib/errors.js';
+import { ApiError, forbidden, fromPrisma, unauthorized } from './lib/errors.js';
 import { agentRoutes, mcpServersRoutes } from './mcp-servers/routes.js';
 import { metricsRoutes, PUBLIC_METRICS_PATHS } from './metrics/routes.js';
+import { notificationsRoutes } from './notifications/routes.js';
 import { pagesRoutes } from './pages/routes.js';
 import { syncRoutes } from './pages/sync-routes.js';
 import type { Services } from './services.js';
 import { goalsRoutes, todosRoutes } from './todos/routes.js';
+import type { CallerEnv } from './tools/registry.js';
 import { mcpRoutes, toolsRoutes } from './tools/routes.js';
-
-export type { Services } from './services.js';
 
 /** Reached without a bearer token: other sites cannot carry one. */
 const PUBLIC_PATHS = new Set(['/health', ...PUBLIC_METRICS_PATHS]);
+
+/**
+ * What a run's agent token reaches: the tools, as MCP or plain HTTP. Never `/agent/config` (other
+ * servers' secrets), settings, or deploy approval.
+ */
+function agentMay(method: string, path: string): boolean {
+    if (path === '/mcp') return true;
+    if (path === '/tools') return method === 'GET';
+    return method === 'POST' && /^\/tools\/[^/]+$/.test(path);
+}
+
+/** Error codes for Hono's own exceptions, e.g. a malformed JSON body. */
+const HTTP_CODES: Partial<Record<number, string>> = {
+    400: 'invalid_request',
+    401: 'unauthorized',
+    403: 'forbidden',
+    404: 'not_found',
+    413: 'payload_too_large',
+    429: 'rate_limited',
+};
 
 /** Any website may report a view; credentials are never involved. */
 const collectCors = cors({
@@ -27,7 +48,7 @@ const collectCors = cors({
 
 export function createApp(services: Services) {
     const { config } = services;
-    const app = new Hono();
+    const app = new Hono<CallerEnv>();
 
     const appCors = cors({
         origin: config.corsOrigins,
@@ -42,24 +63,38 @@ export function createApp(services: Services) {
         exposeHeaders: ['Mcp-Session-Id'],
     });
     app.use('*', (c, next) =>
-        c.req.path === '/metrics/collect' ? collectCors(c, next) : appCors(c, next),
+        PUBLIC_METRICS_PATHS.includes(c.req.path) ? collectCors(c, next) : appCors(c, next),
     );
 
+    // The root API_TOKEN reaches everything. A run's agent token (minted at claim) reaches only
+    // the tools, and only while that run is running.
     app.use('*', async (c, next) => {
         if (PUBLIC_PATHS.has(c.req.path)) return next();
-        const header = c.req.header('authorization') ?? '';
-        const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-        if (!token || !safeEqual(token, config.apiToken)) {
-            throw new ApiError(401, 'unauthorized', 'Missing or invalid bearer token');
+        const token = /^bearer\s+(\S+)\s*$/i.exec(c.req.header('authorization') ?? '')?.[1];
+        if (!token) throw unauthorized();
+        if (safeEqual(token, config.apiToken)) {
+            c.set('caller', { run: null });
+            return next();
         }
-        await next();
+        const run = await services.runs.authorize(token);
+        if (!run) throw unauthorized();
+        if (!agentMay(c.req.method, c.req.path)) {
+            throw forbidden('An agent token only reaches /mcp and /tools');
+        }
+        c.set('caller', { run });
+        return next();
     });
 
     app.onError((err, c) => {
         if (err instanceof ApiError) return c.json(err.toJSON(), err.status);
         if (err instanceof HTTPException) {
-            return c.json({ error: { code: 'http_error', message: err.message } }, err.status);
+            const code =
+                HTTP_CODES[err.status] ?? (err.status >= 500 ? 'internal' : 'invalid_request');
+            return c.json({ error: { code, message: err.message } }, err.status);
         }
+        // Races a request can legitimately lose; not worth a log line full of values.
+        const expected = fromPrisma(err);
+        if (expected) return c.json(expected.toJSON(), expected.status);
         console.error(err);
         return c.json({ error: { code: 'internal', message: 'Internal server error' } }, 500);
     });
@@ -68,14 +103,22 @@ export function createApp(services: Services) {
 
     const groups = routeGroups(services);
     return app
-        .get('/health', (c) => c.json({ ok: true }))
+        .get('/health', async (c) => {
+            try {
+                await services.db.$queryRaw`select 1`;
+                return c.json({ ok: true }, 200);
+            } catch {
+                return c.json({ ok: false }, 503);
+            }
+        })
         .route('/', groups.pages)
         .route('/', groups.sync)
         .route('/', groups.todos)
         .route('/', groups.goals)
         .route('/', groups.conversations)
         .route('/', groups.runs)
-        .route('/', groups.jobs)
+        .route('/', groups.automations)
+        .route('/', groups.notifications)
         .route('/', groups.usage)
         .route('/', groups.metrics)
         .route('/', groups.integrations)
@@ -94,7 +137,8 @@ function routeGroups(services: Services) {
         goals: goalsRoutes(services),
         conversations: conversationsRoutes(services),
         runs: runsRoutes(services),
-        jobs: jobsRoutes(services),
+        automations: automationsRoutes(services),
+        notifications: notificationsRoutes(services),
         usage: usageRoutes(services),
         metrics: metricsRoutes(services),
         integrations: integrationsRoutes(services),

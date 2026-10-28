@@ -1,19 +1,24 @@
-import { and, asc, gte, lt, sql, type AnyColumn, type SQL } from 'drizzle-orm';
-import type { Db } from '../db/client.js';
-import { usageRecords } from '../db/schema.js';
+import { Prisma, type Db } from '../db/client.js';
+import { createdDay, createdWithin, groupedTotals, whereAll } from '../lib/report.js';
 
-export type UsageGrouping = 'day' | 'model' | 'kind' | 'harness' | 'job';
+type UsageGrouping = 'day' | 'model' | 'kind' | 'harness' | 'automation';
 
-const sum = (column: AnyColumn) => sql<number>`coalesce(sum(${column}), 0)::float8`;
+interface UsageTotals {
+    runs: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+    costUsd: number;
+}
 
-const totals = {
-    runs: sql<number>`count(distinct ${usageRecords.runId})::int`,
-    inputTokens: sum(usageRecords.inputTokens),
-    outputTokens: sum(usageRecords.outputTokens),
-    cacheReadTokens: sum(usageRecords.cacheReadTokens),
-    cacheWriteTokens: sum(usageRecords.cacheWriteTokens),
-    costUsd: sum(usageRecords.costUsd),
-};
+const totals = Prisma.sql`
+    count(distinct run_id)::int as "runs",
+    coalesce(sum(input_tokens), 0)::float8 as "inputTokens",
+    coalesce(sum(output_tokens), 0)::float8 as "outputTokens",
+    coalesce(sum(cache_read_tokens), 0)::float8 as "cacheReadTokens",
+    coalesce(sum(cache_write_tokens), 0)::float8 as "cacheWriteTokens",
+    coalesce(sum(cost_usd), 0)::float8 as "costUsd"`;
 
 export function createUsageService(db: Db) {
     return {
@@ -24,27 +29,20 @@ export function createUsageService(db: Db) {
             groupBy: UsageGrouping;
             timezone: string;
         }) {
-            const where = and(
-                options.from ? gte(usageRecords.createdAt, options.from) : undefined,
-                options.to ? lt(usageRecords.createdAt, options.to) : undefined,
-            );
-            const key: SQL<string | null> = {
-                day: sql<string>`to_char(${usageRecords.createdAt} at time zone ${options.timezone}, 'YYYY-MM-DD')`,
-                model: sql<string>`${usageRecords.model}`,
-                kind: sql<string>`${usageRecords.kind}`,
-                harness: sql<string>`${usageRecords.harness}`,
-                job: sql<string | null>`${usageRecords.jobId}::text`,
+            const key = {
+                day: createdDay(options.timezone),
+                model: Prisma.sql`model`,
+                kind: Prisma.sql`kind`,
+                harness: Prisma.sql`harness`,
+                automation: Prisma.sql`automation_id::text`,
             }[options.groupBy];
-            const [overall, groups] = await Promise.all([
-                db.select(totals).from(usageRecords).where(where),
-                db
-                    .select({ key: key.as('key'), ...totals })
-                    .from(usageRecords)
-                    .where(where)
-                    .groupBy(sql`1`)
-                    .orderBy(asc(sql`1`)),
-            ]);
-            return { groupBy: options.groupBy, totals: overall[0]!, groups };
+            const report = await groupedTotals<UsageTotals>(db, {
+                table: 'usage_records',
+                totals,
+                key,
+                where: whereAll(createdWithin(options)),
+            });
+            return { groupBy: options.groupBy, ...report };
         },
     };
 }

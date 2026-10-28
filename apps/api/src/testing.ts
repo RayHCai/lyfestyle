@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { createApp, type AppType } from './app.js';
 import { loadConfig, type Config } from './config.js';
-import { openDatabase } from './db/client.js';
+import { openPglite } from './db/pglite.js';
 import { createSecretBox } from './lib/crypto.js';
 import { Notifier } from './lib/notifier.js';
 import { createServices, type Services } from './services.js';
@@ -9,7 +9,7 @@ import { createServices, type Services } from './services.js';
 export const TEST_TOKEN = 'test-token-0123456789abcdef';
 export const TEST_URL = 'http://api.test';
 
-export const migrationsFolder = fileURLToPath(new URL('../drizzle', import.meta.url));
+export const migrationsFolder = fileURLToPath(new URL('../prisma/migrations', import.meta.url));
 
 export interface TestOptions {
     env?: Record<string, string>;
@@ -32,12 +32,14 @@ export interface TestContext {
 /** A full API on a throwaway in-memory database, reachable without a network. */
 export async function createTestContext(options: TestOptions = {}): Promise<TestContext> {
     const config = loadConfig({
+        // Required by the config, never dialled: tests run on in-memory PGlite.
+        DATABASE_URL: 'postgresql://pglite.invalid/test',
         API_TOKEN: TEST_TOKEN,
         ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
         PUBLIC_URL: TEST_URL,
         ...options.env,
     });
-    const database = await openDatabase({ dataDir: 'memory://', migrationsFolder });
+    const database = await openPglite(migrationsFolder);
     const services = createServices({
         db: database.db,
         config,

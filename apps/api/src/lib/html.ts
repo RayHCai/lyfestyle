@@ -21,7 +21,8 @@ export function htmlToText(html: string): string {
                 code[1]?.toLowerCase() === 'x'
                     ? parseInt(code.slice(2), 16)
                     : parseInt(code.slice(1), 10);
-            return Number.isFinite(point) ? String.fromCodePoint(point) : match;
+            // fromCodePoint throws outside Unicode's range, e.g. on `&#99999999;`.
+            return point > 0 && point <= 0x10ffff ? String.fromCodePoint(point) : match;
         })
         .replace(/[ \t]+\n/g, '\n')
         .replace(/\n{3,}/g, '\n\n')

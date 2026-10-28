@@ -1,49 +1,37 @@
 mod agent;
+pub mod mcp;
+mod skills;
+mod soul;
 mod storage;
 
-use tauri::{AppHandle, Emitter, Manager};
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri::{AppHandle, Manager, RunEvent};
+use tauri_plugin_notification::NotificationExt;
 
-fn console_shortcut() -> Shortcut {
-    Shortcut::new(Some(Modifiers::CONTROL), Code::KeyK)
+/// `CreateProcess` flag that keeps a console child (cmd.exe, taskkill, the npm shim) from flashing
+/// a window.
+#[cfg(windows)]
+pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// An environment variable, treating an empty or blank value as unset like the runner does.
+pub(crate) fn env_var(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|s| !s.trim().is_empty())
 }
 
-/// Bring the main window forward and ask the frontend to open the console.
-fn summon(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
-    let _ = app.emit("console:open", ());
-}
-
-/// Enable or disable the system-wide Ctrl+K. Called from Settings.
+/// Show a system notification. API mode calls it for each new `/notifications` item, so the JS
+/// side needs no notification package of its own.
 #[tauri::command]
-fn set_global_shortcut(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let shortcut = console_shortcut();
-    let registered = app.global_shortcut().is_registered(shortcut);
-    if enabled && !registered {
-        app.global_shortcut().register(shortcut).map_err(|e| e.to_string())
-    } else if !enabled && registered {
-        app.global_shortcut().unregister(shortcut).map_err(|e| e.to_string())
-    } else {
-        Ok(())
+fn notify(app: AppHandle, title: String, body: Option<String>) -> Result<(), String> {
+    let mut builder = app.notification().builder().title(title);
+    if let Some(body) = body.filter(|b| !b.is_empty()) {
+        builder = builder.body(body);
     }
+    builder.show().map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(
-            tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, shortcut, event| {
-                    if event.state() == ShortcutState::Pressed && shortcut == &console_shortcut() {
-                        summon(app);
-                    }
-                })
-                .build(),
-        )
+        .plugin(tauri_plugin_notification::init())
         .manage(agent::AgentState::default())
         .invoke_handler(tauri::generate_handler![
             storage::storage_read,
@@ -54,13 +42,24 @@ pub fn run() {
             agent::agent_send,
             agent::agent_cancel,
             agent::agent_env,
-            set_global_shortcut
+            skills::skills_load,
+            soul::soul_read,
+            soul::soul_write,
+            notify
         ])
         .setup(|app| {
-            // Registration can fail when another app owns Ctrl+K; the in-app shortcut still works.
-            let _ = app.global_shortcut().register(console_shortcut());
+            // The whole UI renders at 80%, like pressing Ctrl - twice in a browser.
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_zoom(0.8);
+            }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Lyfestyle");
+        .build(tauri::generate_context!())
+        .expect("error while building Lyfestyle")
+        .run(|app, event| {
+            // A running agent is not tied to the window; without this it outlives the app.
+            if let RunEvent::Exit = event {
+                app.state::<agent::AgentState>().kill_all();
+            }
+        });
 }

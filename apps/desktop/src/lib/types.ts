@@ -6,12 +6,14 @@ export interface Message {
     content: string;
     createdAt: number;
     /** Text still arriving from the agent; merged into content when the turn ends. */
-    live?: string;
+    live?: string | undefined;
     /** Names of tools the agent used while producing this message. */
-    tools?: string[];
-    error?: string;
+    tools?: string[] | undefined;
+    error?: string | undefined;
     /** API mode: the run that produced (or is producing) this message. */
-    runId?: string;
+    runId?: string | undefined;
+    /** API mode: automation deploys the agent proposed in this message, shown as approval prompts. */
+    deploys?: string[];
 }
 
 export interface Conversation {
@@ -20,13 +22,12 @@ export interface Conversation {
     createdAt: number;
     updatedAt: number;
     /** Claude Code session id, used to resume the same context on the next turn (local mode). */
-    sessionId?: string;
+    sessionId?: string | undefined;
     messages: Message[];
     streaming?: boolean;
-    source?: 'chat' | 'automation';
-    stderr?: string;
+    stderr?: string | undefined;
     /** API mode: the run currently streaming into this conversation. */
-    runId?: string;
+    runId?: string | undefined;
     /** API mode: false until the transcript has been fetched. */
     loaded?: boolean;
     /** API mode: created while the API was unreachable; exists only in this window. */
@@ -40,45 +41,26 @@ export interface DocMeta {
     updatedAt: number;
 }
 
-export type Trigger =
-    | { type: 'manual' }
-    | { type: 'interval'; minutes: number }
-    | { type: 'daily'; time: string }
-    /** API mode only: a five-field cron expression evaluated in the automation's time zone. */
-    | { type: 'cron'; expr: string };
-
-export interface RunSummary {
-    id: string;
-    status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
-    createdAt: number;
-    finishedAt?: number;
-    output?: string;
-    error?: string;
+/** API mode: a document in the trash. */
+export interface TrashedDoc extends DocMeta {
+    deletedAt: number;
+    excerpt: string;
 }
 
-export interface Automation {
-    id: string;
-    name: string;
-    prompt: string;
-    trigger: Trigger;
-    enabled: boolean;
-    createdAt: number;
-    lastRunAt?: number;
-    nextRunAt?: number;
-    /** Local mode: the conversation the last run wrote into. */
-    lastConversationId?: string;
-    /** API mode: IANA time zone the schedule is evaluated in. */
-    timezone?: string;
-    /** API mode: the most recent run. */
-    lastRun?: RunSummary;
-}
+/** Days a trashed document stays restorable before the API purges it. */
+export { TRASH_DAYS } from '@lyfestyle/shared';
 
 export interface Settings {
     name: string;
     agentCommand: string;
     model: string;
+    /** Claude Code `--effort`: low, medium, high, xhigh or max; empty for its default. */
+    effort: string;
     workingDirectory: string;
-    globalShortcut: boolean;
+    /** Folder of `<name>/SKILL.md` skills linked into `~/.claude/skills`; empty for the default. */
+    skillsDirectory: string;
+    /** The todo app's MCP URL (`…/mcp/<secret>`). Given to every agent as the `todo` server. */
+    todoMcpUrl: string;
     /** Lyfestyle API origin; with a token it switches the app from local files to the API. */
     apiUrl: string;
     apiToken: string;
@@ -88,15 +70,22 @@ export const defaultSettings: Settings = {
     name: '',
     agentCommand: 'claude',
     model: '',
+    effort: '',
     workingDirectory: '',
-    globalShortcut: true,
+    skillsDirectory: '',
+    todoMcpUrl: '',
     apiUrl: '',
     apiToken: '',
 };
 
+/** A skill the user can run as `/name` from the composer. */
+export interface Skill {
+    name: string;
+    description: string;
+}
+
 export interface AgentEnv {
     harness: string | null;
-    platform: string;
     apiUrl: string | null;
     apiToken: string | null;
 }
@@ -105,6 +94,7 @@ export type View =
     | { name: 'home' }
     | { name: 'conversation'; id: string }
     | { name: 'conversations' }
-    | { name: 'documents'; id?: string }
-    | { name: 'automations'; id?: string }
+    | { name: 'documents'; id?: string | undefined }
+    | { name: 'automations' }
+    | { name: 'pageviews' }
     | { name: 'settings' };

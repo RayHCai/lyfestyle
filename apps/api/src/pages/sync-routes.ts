@@ -1,9 +1,11 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { validate } from '../lib/validate.js';
+import { limitBody, validate } from '../lib/validate.js';
 import type { Services } from '../services.js';
-import type { ChangeResult } from './service.js';
-import { pageFields } from './routes.js';
+import { pageFields } from './schema.js';
+
+/** 500 changes of up to a million characters each would parse to gigabytes in memory. */
+const PUSH_BODY_BYTES = 10 * 1024 * 1024;
 
 const change = z.object({
     id: z.uuid(),
@@ -17,14 +19,9 @@ export const syncRoutes = ({ pages }: Services) =>
         .basePath('/sync')
         .post(
             '/push',
+            limitBody(PUSH_BODY_BYTES),
             validate('json', z.object({ changes: z.array(change).max(500) })),
-            async (c) => {
-                const results: ChangeResult[] = [];
-                for (const item of c.req.valid('json').changes) {
-                    results.push(await pages.applyChange(item));
-                }
-                return c.json({ results });
-            },
+            async (c) => c.json({ results: await pages.applyChanges(c.req.valid('json').changes) }),
         )
         .get(
             '/pull',

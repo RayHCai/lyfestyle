@@ -13,25 +13,29 @@
         "start": "node dist/index.js",
         "typecheck": "tsc -p .",
         "test": "vitest run",
-        "db:generate": "drizzle-kit generate"
+        "db:generate": "node scripts/db-generate.mjs",
+        "postinstall": "prisma generate"
     },
     "dependencies": {
-        "@electric-sql/pglite": "^0.5.0",
         "@hono/node-server": "^2.1.0",
         "@hono/zod-validator": "^0.9.0",
         "@lyfestyle/shared": "workspace:*",
         "@modelcontextprotocol/sdk": "^1.32.0",
+        "@prisma/adapter-pg": "^7.10.1",
+        "@prisma/client": "^7.10.1",
         "croner": "^10.0.0",
-        "drizzle-orm": "^0.45.0",
         "hono": "^4.13.0",
         "pg": "^8.23.0",
         "zod": "^4.6.0"
     },
     "devDependencies": {
+        "@electric-sql/pglite": "^0.5.0",
+        "@electric-sql/pglite-socket": "^0.2.14",
         "@types/node": "^22.20.0",
         "@types/pg": "^8.23.0",
-        "drizzle-kit": "^0.31.0",
         "esbuild": "^0.28.0",
+        "pglite-prisma-adapter": "^0.7.2",
+        "prisma": "^7.10.1",
         "tsx": "^4.23.0",
         "typescript": "^7.0.0",
         "vitest": "^5.0.0"

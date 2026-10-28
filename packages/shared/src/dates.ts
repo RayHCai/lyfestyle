@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-const DAY_MS = 86_400_000;
+export const DAY_MS = 86_400_000;
 
 /** A calendar day in the user's own time zone, `YYYY-MM-DD`. */
 export const isoDate = z

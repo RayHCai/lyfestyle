@@ -1,24 +1,39 @@
 import { isoDate } from '@lyfestyle/shared';
 import { z } from 'zod';
-import type { JobsService } from '../agent/jobs.js';
+import { automationGuide } from '../automations/guide.js';
+import { deployStatus } from '../automations/schema.js';
+import type { AutomationsService } from '../automations/service.js';
 import type { Canvas } from '../integrations/canvas.js';
 import type { Resend } from '../integrations/resend.js';
+import { emailFields } from '../integrations/schema.js';
+import { notificationFields } from '../notifications/schema.js';
+import type { NotificationsService } from '../notifications/service.js';
+import { timeZone } from '../lib/timezone.js';
+import { pageDraft, pageFields } from '../pages/schema.js';
 import type { PagesService } from '../pages/service.js';
+import {
+    dateRange,
+    goalInput,
+    goalPatch,
+    todoFields,
+    todoInput,
+    todoPatch,
+} from '../todos/schema.js';
 import type { TodosService } from '../todos/service.js';
-import { goalFields, todoFields } from '../todos/routes.js';
 import { defineTool, type Tool } from './registry.js';
 
-export interface ToolDeps {
+interface ToolDeps {
     pages: PagesService;
     todos: TodosService;
-    jobs: JobsService;
+    automations: AutomationsService;
+    notifications: NotificationsService;
+    limits: { budgetUsd: number; timeoutMs: number };
     canvas: Canvas;
     resend: Resend;
 }
 
 const id = z.uuid();
 const limit = (max: number, fallback: number) => z.number().int().min(1).max(max).default(fallback);
-const emails = z.array(z.email()).max(50);
 
 function pageTools({ pages }: ToolDeps): Tool[] {
     return [
@@ -49,9 +64,9 @@ function pageTools({ pages }: ToolDeps): Tool[] {
             description:
                 'Create a page. Content is markdown. Link to another page with [label](page:<page id>); links may form cycles.',
             input: z.object({
-                title: z.string().max(500),
-                content: z.string().max(1_000_000).default(''),
-                icon: z.string().max(64).optional().describe('A single emoji'),
+                title: pageFields.title,
+                content: pageFields.content.default(''),
+                icon: pageFields.icon.optional().describe('A single emoji'),
             }),
             run: (input) => pages.create(input),
         }),
@@ -61,9 +76,7 @@ function pageTools({ pages }: ToolDeps): Tool[] {
                 'Replace a page’s title, content or icon. Fields left out are unchanged. Pass baseVersion from pages_get to refuse the write if someone edited the page since.',
             input: z.object({
                 id,
-                title: z.string().max(500).optional(),
-                content: z.string().max(1_000_000).optional(),
-                icon: z.string().max(64).nullable().optional(),
+                ...pageDraft.shape,
                 baseVersion: z.number().int().positive().optional(),
             }),
             run: ({ id, baseVersion, ...draft }) => pages.update(id, draft, baseVersion),
@@ -76,7 +89,8 @@ function pageTools({ pages }: ToolDeps): Tool[] {
         }),
         defineTool({
             name: 'pages_delete',
-            description: 'Move a page to the trash. It can be restored from the app.',
+            description:
+                'Move a page to the trash. It can be restored from the app for 7 days, then it is deleted for good.',
             input: z.object({ id }),
             destructive: true,
             run: ({ id }) => pages.remove(id),
@@ -105,7 +119,7 @@ function todoTools({ todos }: ToolDeps): Tool[] {
         defineTool({
             name: 'todos_list',
             description: 'List todos dated within a range (inclusive), for days outside the board.',
-            input: z.object({ from: isoDate, to: isoDate, scope: todoFields.scope.optional() }),
+            input: dateRange.extend({ scope: todoFields.scope.optional() }),
             readOnly: true,
             run: (filter) => todos.listTodos(filter),
         }),
@@ -113,12 +127,8 @@ function todoTools({ todos }: ToolDeps): Tool[] {
             name: 'todos_create',
             description:
                 'Add a todo. scope "day" belongs to one date; scope "week" belongs to the week (Sunday to Saturday) containing date.',
-            input: z.object({
-                title: todoFields.title,
-                scope: todoFields.scope,
-                date: isoDate,
-                notes: z.string().max(10_000).optional(),
-                goalId: id.optional().describe('A monthly goal this todo works towards'),
+            input: todoInput.extend({
+                goalId: todoInput.shape.goalId.describe('A monthly goal this todo works towards'),
             }),
             run: (input) => todos.createTodo(input),
         }),
@@ -126,7 +136,7 @@ function todoTools({ todos }: ToolDeps): Tool[] {
             name: 'todos_update',
             description:
                 'Change a todo. Set completed to check it off or reopen it; move it by changing date.',
-            input: z.object({ id, ...z.object(todoFields).partial().shape }),
+            input: z.object({ id, ...todoPatch.shape }),
             run: ({ id, ...patch }) => todos.updateTodo(id, patch),
         }),
         defineTool({
@@ -139,25 +149,22 @@ function todoTools({ todos }: ToolDeps): Tool[] {
         defineTool({
             name: 'goals_list',
             description: 'List monthly goals for the months between two dates.',
-            input: z.object({ from: isoDate, to: isoDate }),
+            input: dateRange,
             readOnly: true,
             run: (filter) => todos.listGoals(filter),
         }),
         defineTool({
             name: 'goals_create',
             description: 'Add a goal for the month containing `month`.',
-            input: z.object({
-                title: goalFields.title,
-                month: isoDate,
-                color: goalFields.color.optional().describe('Accent colour, e.g. #f59e0b'),
-                notes: z.string().max(10_000).optional(),
+            input: goalInput.extend({
+                color: goalInput.shape.color.describe('Accent colour, e.g. #f59e0b'),
             }),
             run: (input) => todos.createGoal(input),
         }),
         defineTool({
             name: 'goals_update',
             description: 'Change a monthly goal, or set completed to mark it done.',
-            input: z.object({ id, ...z.object(goalFields).partial().shape }),
+            input: z.object({ id, ...goalPatch.shape }),
             run: ({ id, ...patch }) => todos.updateGoal(id, patch),
         }),
         defineTool({
@@ -170,51 +177,108 @@ function todoTools({ todos }: ToolDeps): Tool[] {
     ];
 }
 
-function automationTools({ jobs }: ToolDeps): Tool[] {
+function automationTools({ automations, limits }: ToolDeps): Tool[] {
     const schedule = z
         .string()
         .min(1)
+        .max(200)
         .describe('Cron expression, e.g. "0 7 * * 1-5" for 7:00 on weekdays');
-    const timezone = z.string().describe('IANA time zone, e.g. America/New_York');
     return [
         defineTool({
             name: 'automations_list',
-            description: 'List scheduled automations: prompts the agent runs on a cron schedule.',
+            description:
+                'List automations: approved code the Lyfestyle server runs on a cron schedule, with their next and last runs.',
             input: z.object({}),
             readOnly: true,
-            run: () => jobs.list(),
+            run: () => automations.list(),
         }),
         defineTool({
-            name: 'automations_create',
+            name: 'automations_get',
             description:
-                'Schedule a prompt for the agent to run on its own, e.g. a morning briefing. The prompt must stand alone: the run has no conversation history.',
-            input: z.object({
-                name: z.string().min(1).max(200),
-                prompt: z.string().min(1).max(100_000),
-                schedule,
-                timezone: timezone.default('UTC'),
-            }),
-            run: (input) => jobs.create(input),
+                'Read one automation: its deployed code, its state, and its recent runs with logs, errors and cost.',
+            input: z.object({ id }),
+            readOnly: true,
+            run: ({ id }) => automations.get(id),
         }),
         defineTool({
-            name: 'automations_update',
-            description: 'Change an automation, or pause it with enabled: false.',
+            name: 'automations_deploy',
+            description: automationGuide(limits),
             input: z.object({
-                id,
-                name: z.string().min(1).max(200).optional(),
-                prompt: z.string().min(1).max(100_000).optional(),
-                schedule: schedule.optional(),
-                timezone: timezone.optional(),
-                enabled: z.boolean().optional(),
+                automationId: id.optional().describe('Set to change an existing automation'),
+                name: z.string().trim().min(1).max(200),
+                description: z
+                    .string()
+                    .max(2000)
+                    .default('')
+                    .describe('One or two sentences on what it does, shown to the user'),
+                schedule,
+                timezone: timeZone
+                    .default('UTC')
+                    .describe("IANA time zone, e.g. America/New_York; use the user's own"),
+                code: z.string().min(1).max(200_000),
             }),
-            run: ({ id, ...patch }) => jobs.update(id, patch),
+            // An automation's own runs read untrusted content such as email, and must not be able
+            // to put code in front of the user for approval.
+            attendedOnly: true,
+            // Small on purpose: the desktop app reads the deploy id from this result to show its
+            // approval prompt, and the runner clips long tool results.
+            run: async (input, ctx) => {
+                const deploy = await automations.propose(input, {
+                    kind: ctx.run?.kind ?? 'user',
+                    runId: ctx.run?.id ?? null,
+                });
+                return {
+                    id: deploy.id,
+                    status: deploy.status,
+                    automationId: deploy.automationId,
+                    name: deploy.name,
+                    note: 'Waiting for the user to approve it in the chat.',
+                };
+            },
+        }),
+        defineTool({
+            name: 'automations_list_deploys',
+            description: 'List proposed deploys, e.g. to see which still wait for approval.',
+            input: z.object({ status: deployStatus.optional() }),
+            readOnly: true,
+            run: ({ status }) => automations.deploys(status),
+        }),
+        defineTool({
+            name: 'automations_run',
+            description:
+                'Run an automation’s approved code now, outside its schedule. Returns the started run; read automations_get for its outcome.',
+            input: z.object({ id }),
+            // Like deploying: an unattended run steered by what it read must not start, pause or
+            // delete the user's automations.
+            attendedOnly: true,
+            run: ({ id }) => automations.trigger(id),
+        }),
+        defineTool({
+            name: 'automations_set_enabled',
+            description: 'Pause an automation (enabled: false) or resume it.',
+            input: z.object({ id, enabled: z.boolean() }),
+            attendedOnly: true,
+            run: ({ id, enabled }) => automations.setEnabled(id, enabled),
         }),
         defineTool({
             name: 'automations_delete',
-            description: 'Delete an automation. Its past runs are kept.',
+            description: 'Delete an automation and its run history.',
             input: z.object({ id }),
             destructive: true,
-            run: ({ id }) => jobs.remove(id),
+            attendedOnly: true,
+            run: ({ id }) => automations.remove(id),
+        }),
+    ];
+}
+
+function notificationTools({ notifications }: ToolDeps): Tool[] {
+    return [
+        defineTool({
+            name: 'notify',
+            description:
+                'Show the user a desktop notification in the Lyfestyle app, e.g. when unattended work finishes or needs them.',
+            input: z.object(notificationFields),
+            run: (input) => notifications.create({ ...input, source: 'Lyfestyle agent' }),
         }),
     ];
 }
@@ -296,15 +360,7 @@ function emailTools({ resend }: ToolDeps): Tool[] {
             name: 'email_send',
             description:
                 'Send an email right away from the app’s own address. It cannot be unsent: unless the user asked for this exact email, show them the draft and get a yes first.',
-            input: z.object({
-                to: emails.min(1),
-                subject: z.string().min(1).max(998),
-                text: z.string().max(200_000).optional(),
-                html: z.string().max(500_000).optional(),
-                cc: emails.optional(),
-                bcc: emails.optional(),
-                replyTo: z.email().optional(),
-            }),
+            input: z.object(emailFields),
             destructive: true,
             requires: 'resend',
             run: (email) => resend.send(email),
@@ -317,6 +373,7 @@ export function createTools(deps: ToolDeps): Tool[] {
         ...pageTools(deps),
         ...todoTools(deps),
         ...automationTools(deps),
+        ...notificationTools(deps),
         ...canvasTools(deps),
         ...emailTools(deps),
     ];

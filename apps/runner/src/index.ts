@@ -5,6 +5,7 @@ import { CommandHarness } from './command.js';
 import { loadRunnerEnv, type RunnerEnv } from './env.js';
 import type { Harness } from './harness.js';
 import { Runner } from './runner.js';
+import { readSoul } from './soul.js';
 
 const harnesses: Record<string, (env: RunnerEnv) => Harness> = {
     'claude-code': (env) =>
@@ -19,7 +20,10 @@ const harnesses: Record<string, (env: RunnerEnv) => Harness> = {
     command: (env) => {
         if (!env.harnessCommand)
             throw new Error('AGENT_HARNESS=command needs AGENT_HARNESS_COMMAND');
-        return new CommandHarness(env.harnessCommand);
+        return new CommandHarness(env.harnessCommand, {
+            maxTurns: env.maxTurns,
+            maxBudgetUsd: env.maxBudgetUsd,
+        });
     },
 };
 
@@ -38,8 +42,9 @@ const runner = new Runner({
     harness,
     runnerId: env.runnerId,
     apiUrl: env.apiUrl,
-    apiToken: env.apiToken,
     concurrency: env.concurrency,
+    runTimeoutMs: env.runTimeoutMs,
+    soul: () => readSoul(),
     log: (message, data) =>
         console.log(`[runner] ${message}`, ...(data === undefined ? [] : [data])),
 });

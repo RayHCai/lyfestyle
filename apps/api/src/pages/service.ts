@@ -1,35 +1,25 @@
-import { extractPageLinks } from '@lyfestyle/shared';
-import { and, asc, desc, eq, gt, ilike, isNotNull, isNull, or, sql } from 'drizzle-orm';
-import type { Db } from '../db/client.js';
-import { pageLinks, pages } from '../db/schema.js';
+import { DAY_MS, extractPageLinks, TRASH_DAYS } from '@lyfestyle/shared';
+import { advisoryLock, Prisma, type Db, type Tx } from '../db/client.js';
 import { conflict, notFound } from '../lib/errors.js';
-import { decodeCursor, paginate } from '../lib/pagination.js';
-import { escapeLike } from '../lib/validate.js';
+import { keyset, paginate } from '../lib/pagination.js';
 
 /** Serialises page writes so `seq` order is commit order and pulls never skip a write. */
 const PAGE_WRITE_LOCK = 0x1f5e0001;
 
-const columns = {
-    id: pages.id,
-    title: pages.title,
-    content: pages.content,
-    icon: pages.icon,
-    version: pages.version,
-    createdAt: pages.createdAt,
-    updatedAt: pages.updatedAt,
-    deletedAt: pages.deletedAt,
-};
+const EXCERPT_LENGTH = 200;
 
+/** Everything but the body, which can be a megabyte: lists carry an excerpt instead. */
 const summaryColumns = {
-    id: pages.id,
-    title: pages.title,
-    icon: pages.icon,
-    excerpt: sql<string>`left(${pages.content}, 200)`,
-    version: pages.version,
-    createdAt: pages.createdAt,
-    updatedAt: pages.updatedAt,
-    deletedAt: pages.deletedAt,
-};
+    id: true,
+    title: true,
+    icon: true,
+    version: true,
+    createdAt: true,
+    updatedAt: true,
+    deletedAt: true,
+} as const;
+
+const columns = { ...summaryColumns, content: true } as const;
 
 export interface Page {
     id: string;
@@ -60,49 +50,67 @@ export interface PageChange {
 }
 
 export type ChangeResult =
-    { id: string; status: 'applied'; page: Page } | { id: string; status: 'conflict'; page: Page };
+    | { id: string; status: 'applied'; page: Page }
+    | { id: string; status: 'conflict'; page: Page }
+    /** The page was purged from the trash, so there is no server copy left to rebase on. */
+    | { id: string; status: 'gone' };
 
 export type PagesService = ReturnType<typeof createPagesService>;
 
-export function createPagesService(db: Db) {
-    function write<T>(fn: (tx: Db) => Promise<T>): Promise<T> {
-        return db.transaction(async (tx) => {
-            await tx.execute(sql`select pg_advisory_xact_lock(${PAGE_WRITE_LOCK})`);
+export function createPagesService(db: Db, now: () => Date) {
+    function write<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
+        return db.$transaction(async (tx) => {
+            await advisoryLock(tx, PAGE_WRITE_LOCK);
             return fn(tx);
         });
     }
 
-    async function find(tx: Db, id: string): Promise<Page | undefined> {
-        const [row] = await tx.select(columns).from(pages).where(eq(pages.id, id));
-        return row;
+    function find(tx: Tx, id: string): Promise<Page | null> {
+        return tx.page.findUnique({ where: { id }, select: columns });
     }
 
-    async function setLinks(tx: Db, sourceId: string, content: string) {
-        await tx.delete(pageLinks).where(eq(pageLinks.sourceId, sourceId));
+    async function setLinks(tx: Tx, sourceId: string, content: string) {
+        await tx.pageLink.deleteMany({ where: { sourceId } });
         const targets = extractPageLinks(content);
         if (targets.length) {
-            await tx.insert(pageLinks).values(targets.map((targetId) => ({ sourceId, targetId })));
+            await tx.pageLink.createMany({
+                data: targets.map((targetId) => ({ sourceId, targetId })),
+            });
         }
     }
 
-    async function insert(tx: Db, id: string | undefined, draft: PageDraft, deleted = false) {
-        const [row] = await tx
-            .insert(pages)
-            .values({
+    /** Adds the first `EXCERPT_LENGTH` characters of each page's body, cut in SQL. */
+    async function withExcerpts<T extends { id: string }>(rows: T[]) {
+        if (!rows.length) return [];
+        const ids = Prisma.join(rows.map((r) => Prisma.sql`${r.id}::uuid`));
+        const found = await db.$queryRaw<{ id: string; excerpt: string }[]>`
+            select id, left(content, ${EXCERPT_LENGTH}::int) as excerpt from pages
+            where id in (${ids})`;
+        const excerpts = new Map(found.map((r) => [r.id, r.excerpt]));
+        return rows.map((row) => ({ ...row, excerpt: excerpts.get(row.id) ?? '' }));
+    }
+
+    async function insert(tx: Tx, id: string | undefined, draft: PageDraft, deleted = false) {
+        // Every page write holds PAGE_WRITE_LOCK, so nothing can insert this id in between.
+        if (id && (await find(tx, id))) throw conflict(`Page ${id} already exists`);
+        const at = now();
+        const row = await tx.page.create({
+            data: {
                 ...(id ? { id } : {}),
                 title: draft.title ?? '',
                 content: draft.content ?? '',
                 icon: draft.icon ?? null,
-                deletedAt: deleted ? new Date() : null,
-            })
-            .onConflictDoNothing()
-            .returning(columns);
-        if (!row) throw conflict(`Page ${id} already exists`);
+                createdAt: at,
+                updatedAt: at,
+                deletedAt: deleted ? at : null,
+            },
+            select: columns,
+        });
         await setLinks(tx, row.id, row.content);
         return row;
     }
 
-    async function save(tx: Db, current: Page, next: PageDraft & { deleted?: boolean }) {
+    async function save(tx: Tx, current: Page, next: PageDraft & { deleted?: boolean }) {
         const title = next.title ?? current.title;
         const content = next.content ?? current.content;
         const icon = next.icon === undefined ? current.icon : next.icon;
@@ -115,25 +123,28 @@ export function createPagesService(db: Db) {
         ) {
             return current;
         }
-        const now = new Date();
-        const [row] = await tx
-            .update(pages)
-            .set({
+        const at = now();
+        const [allocated] = await tx.$queryRaw<
+            { seq: bigint }[]
+        >`select nextval('page_seq') as seq`;
+        const row = await tx.page.update({
+            where: { id: current.id },
+            data: {
                 title,
                 content,
                 icon,
-                deletedAt: deleted ? (current.deletedAt ?? now) : null,
+                deletedAt: deleted ? (current.deletedAt ?? at) : null,
                 version: current.version + 1,
-                seq: sql`nextval('page_seq')`,
-                updatedAt: now,
-            })
-            .where(eq(pages.id, current.id))
-            .returning(columns);
+                seq: allocated!.seq,
+                updatedAt: at,
+            },
+            select: columns,
+        });
         if (content !== current.content) await setLinks(tx, current.id, content);
-        return row!;
+        return row;
     }
 
-    async function live(tx: Db, id: string, baseVersion?: number) {
+    async function live(tx: Tx, id: string, baseVersion?: number) {
         const current = await find(tx, id);
         if (!current || current.deletedAt) throw notFound('Page');
         if (baseVersion !== undefined && baseVersion !== current.version) {
@@ -146,6 +157,31 @@ export function createPagesService(db: Db) {
         const page = await find(db, id);
         if (!page || (page.deletedAt && !includeDeleted)) throw notFound('Page');
         return page;
+    }
+
+    /** Applies one device's edit. A retried push whose content already landed is not a conflict. */
+    function applyChange(change: PageChange): Promise<ChangeResult> {
+        return write(async (tx) => {
+            const current = await find(tx, change.id);
+            if (!current) {
+                // Edited on a server version of a page that has since been purged from the trash.
+                // Inserting it would resurrect a page every other device has dropped.
+                if (change.baseVersion !== null) return { id: change.id, status: 'gone' };
+                const page = await insert(tx, change.id, change, change.deleted);
+                return { id: change.id, status: 'applied', page };
+            }
+            const same =
+                current.title === change.title &&
+                current.content === change.content &&
+                current.icon === change.icon &&
+                (current.deletedAt !== null) === change.deleted;
+            if (same) return { id: change.id, status: 'applied', page: current };
+            if (change.baseVersion !== current.version) {
+                return { id: change.id, status: 'conflict', page: current };
+            }
+            const page = await save(tx, current, change);
+            return { id: change.id, status: 'applied', page };
+        });
     }
 
     return {
@@ -181,118 +217,117 @@ export function createPagesService(db: Db) {
             });
         },
 
+        /**
+         * Hard-deletes pages that have sat in the trash for over `TRASH_DAYS`. A sync client that
+         * has not pulled since then never sees those deletions; see "Offline sync" in docs/api.md.
+         */
+        purgeTrash(at: Date) {
+            const before = new Date(at.getTime() - TRASH_DAYS * DAY_MS);
+            return write(async (tx) => {
+                const { count } = await tx.page.deleteMany({
+                    where: { deletedAt: { lt: before } },
+                });
+                return count;
+            });
+        },
+
         async list(options: { limit: number; cursor?: string | undefined; deleted?: boolean }) {
-            const after = decodeCursor(options.cursor);
-            const rows = await db
-                .select(summaryColumns)
-                .from(pages)
-                .where(
-                    and(
-                        options.deleted ? isNotNull(pages.deletedAt) : isNull(pages.deletedAt),
-                        after
-                            ? sql`(${pages.updatedAt}, ${pages.id}) < (${after.at.toISOString()}::timestamptz, ${after.id}::uuid)`
-                            : undefined,
-                    ),
-                )
-                .orderBy(desc(pages.updatedAt), desc(pages.id))
-                .limit(options.limit + 1);
-            return paginate(rows, options.limit, (r) => ({ at: r.updatedAt, id: r.id }));
+            const page = keyset('updatedAt', options);
+            const rows = await db.page.findMany({
+                ...page,
+                where: { deletedAt: options.deleted ? { not: null } : null, ...page.where },
+                select: summaryColumns,
+            });
+            const { items, nextCursor } = paginate(rows, options.limit, 'updatedAt');
+            return { items: await withExcerpts(items), nextCursor };
         },
 
         /** Full-text match over title and body, plus substring match on titles for type-ahead. */
-        search(q: string, limit: number) {
-            const query = sql`websearch_to_tsquery('english', ${q})`;
-            return db
-                .select(summaryColumns)
-                .from(pages)
-                .where(
-                    and(
-                        isNull(pages.deletedAt),
-                        or(
-                            sql`${pages.search} @@ ${query}`,
-                            ilike(pages.title, `%${escapeLike(q)}%`),
-                        ),
-                    ),
-                )
-                .orderBy(desc(sql`ts_rank(${pages.search}, ${query})`), desc(pages.updatedAt))
-                .limit(limit);
+        async search(q: string, limit: number) {
+            // The generated tsvector column is outside Prisma's types, so ranking is raw SQL.
+            const hits = await db.$queryRaw<{ id: string; excerpt: string }[]>`
+                select id, left(content, ${EXCERPT_LENGTH}::int) as excerpt
+                from pages, websearch_to_tsquery('english', ${q}) as query
+                where deleted_at is null
+                    and (search @@ query or title ilike ${`%${escapeLike(q)}%`})
+                order by ts_rank(search, query) desc, updated_at desc
+                limit ${limit}::int`;
+            const rows = await db.page.findMany({
+                where: { id: { in: hits.map((h) => h.id) } },
+                select: summaryColumns,
+            });
+            const byId = new Map(rows.map((r) => [r.id, r]));
+            return hits.flatMap((h) => {
+                const page = byId.get(h.id);
+                return page ? [{ ...page, excerpt: h.excerpt }] : [];
+            });
         },
 
         async backlinks(id: string) {
             await get(id);
-            return db
-                .select(summaryColumns)
-                .from(pageLinks)
-                .innerJoin(pages, eq(pages.id, pageLinks.sourceId))
-                .where(and(eq(pageLinks.targetId, id), isNull(pages.deletedAt)))
-                .orderBy(desc(pages.updatedAt));
+            const rows = await db.page.findMany({
+                where: { deletedAt: null, links: { some: { targetId: id } } },
+                select: summaryColumns,
+                orderBy: { updatedAt: 'desc' },
+            });
+            return withExcerpts(rows);
         },
 
         /** Links out of a page, including ones whose target is deleted or not synced yet. */
         async links(id: string) {
             await get(id);
-            const rows = await db
-                .select({
-                    id: pageLinks.targetId,
-                    title: pages.title,
-                    icon: pages.icon,
-                    deletedAt: pages.deletedAt,
-                })
-                .from(pageLinks)
-                .leftJoin(pages, eq(pages.id, pageLinks.targetId))
-                .where(eq(pageLinks.sourceId, id));
-            return rows.map((r) => ({
-                id: r.id,
-                title: r.title,
-                icon: r.icon,
-                exists: r.title !== null && r.deletedAt === null,
-            }));
+            const links = await db.pageLink.findMany({
+                where: { sourceId: id },
+                select: { targetId: true },
+            });
+            const targets = await db.page.findMany({
+                where: { id: { in: links.map((l) => l.targetId) } },
+                select: { id: true, title: true, icon: true, deletedAt: true },
+            });
+            const byId = new Map(targets.map((t) => [t.id, t]));
+            return links.map(({ targetId }) => {
+                const target = byId.get(targetId);
+                return {
+                    id: targetId,
+                    title: target?.title ?? null,
+                    icon: target?.icon ?? null,
+                    exists: target !== undefined && target.deletedAt === null,
+                };
+            });
         },
 
         async graph() {
-            const nodes = await db
-                .select({ id: pages.id, title: pages.title, icon: pages.icon })
-                .from(pages)
-                .where(isNull(pages.deletedAt));
+            const nodes = await db.page.findMany({
+                where: { deletedAt: null },
+                select: { id: true, title: true, icon: true },
+            });
             const ids = new Set(nodes.map((n) => n.id));
-            const edges = await db
-                .select({ source: pageLinks.sourceId, target: pageLinks.targetId })
-                .from(pageLinks)
-                .innerJoin(pages, eq(pages.id, pageLinks.sourceId))
-                .where(isNull(pages.deletedAt));
+            const links = await db.pageLink.findMany({
+                where: { source: { deletedAt: null } },
+                select: { sourceId: true, targetId: true },
+            });
+            const edges = links.map((l) => ({ source: l.sourceId, target: l.targetId }));
             return { nodes, edges: edges.filter((e) => ids.has(e.target)) };
         },
 
-        /** Applies one device's edit. A retried push whose content already landed is not a conflict. */
-        applyChange(change: PageChange): Promise<ChangeResult> {
-            return write(async (tx) => {
-                const current = await find(tx, change.id);
-                if (!current) {
-                    const page = await insert(tx, change.id, change, change.deleted);
-                    return { id: change.id, status: 'applied', page };
-                }
-                const same =
-                    current.title === change.title &&
-                    current.content === change.content &&
-                    current.icon === change.icon &&
-                    (current.deletedAt !== null) === change.deleted;
-                if (same) return { id: change.id, status: 'applied', page: current };
-                if (change.baseVersion !== current.version) {
-                    return { id: change.id, status: 'conflict', page: current };
-                }
-                const page = await save(tx, current, change);
-                return { id: change.id, status: 'applied', page };
-            });
+        /**
+         * Applies a device's edits in order, each in a write of its own so a large push never holds
+         * the page write lock, or one transaction, for all of them.
+         */
+        async applyChanges(changes: PageChange[]) {
+            const results: ChangeResult[] = [];
+            for (const change of changes) results.push(await applyChange(change));
+            return results;
         },
 
         /** Every page written after `cursor`, deletions included, in write order. */
         async changesSince(cursor: number, limit: number) {
-            const rows = await db
-                .select({ ...columns, seq: pages.seq })
-                .from(pages)
-                .where(gt(pages.seq, cursor))
-                .orderBy(asc(pages.seq))
-                .limit(limit + 1);
+            const rows = await db.page.findMany({
+                where: { seq: { gt: cursor } },
+                select: { ...columns, seq: true },
+                orderBy: { seq: 'asc' },
+                take: limit + 1,
+            });
             const batch = rows.slice(0, limit);
             return {
                 pages: batch.map(({ seq: _seq, ...page }) => page),
@@ -301,4 +336,9 @@ export function createPagesService(db: Db) {
             };
         },
     };
+}
+
+/** Escapes `%`, `_` and `\` so user text matches literally inside an `ilike` pattern. */
+function escapeLike(value: string): string {
+    return value.replace(/[\\%_]/g, (c) => `\\${c}`);
 }

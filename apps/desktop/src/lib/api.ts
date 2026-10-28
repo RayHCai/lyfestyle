@@ -1,29 +1,32 @@
 /**
  * Thin client for the Lyfestyle API (apps/api), covering the routes the desktop app uses.
- * Shapes follow docs/api.md. Kept dependency-free so the app type-checks on its own toolchain.
+ * Shapes follow docs/api.md; the run-event protocol and its SSE reader come from
+ * `@lyfestyle/shared`, so they cannot drift from what the API and runner speak.
  */
+import {
+    streamRunEvents,
+    type ContentBlock,
+    type MessageRole,
+    type RunEvent,
+    type RunKind,
+    type RunStatus,
+} from '@lyfestyle/shared';
 
 export interface ApiConfig {
     baseUrl: string;
     token: string;
 }
 
-export type ContentBlock =
-    | { type: 'text'; text: string }
-    | { type: 'thinking'; text: string }
-    | { type: 'tool_use'; id: string; name: string; input: unknown }
-    | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean };
-
-export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
-export const TERMINAL: readonly RunStatus[] = ['succeeded', 'failed', 'cancelled'];
-
 export interface ApiRun {
     id: string;
-    kind: 'chat' | 'job';
+    kind: RunKind;
     status: RunStatus;
     prompt: string;
     conversationId: string | null;
-    jobId: string | null;
+    /** The automation run that queued this agent run, if one did. */
+    automationRunId: string | null;
+    /** The most this run may spend, in USD; the API stops it beyond that. */
+    budgetUsd: number;
     output: string | null;
     error: string | null;
     createdAt: string;
@@ -32,7 +35,7 @@ export interface ApiRun {
 }
 export interface ApiMessage {
     id: string;
-    role: 'user' | 'assistant' | 'tool';
+    role: MessageRole;
     content: ContentBlock[];
     runId: string | null;
     createdAt: string;
@@ -47,54 +50,127 @@ export interface ApiConversationFull extends ApiConversation {
     messages: ApiMessage[];
     activeRuns: ApiRun[];
 }
-export interface ApiPageSummary {
+/** A full page as `/sync` exchanges it. */
+export interface ApiSyncPage {
     id: string;
     title: string;
     icon: string | null;
-    excerpt: string;
+    content: string;
     version: number;
     createdAt: string;
     updatedAt: string;
-}
-export interface ApiPage extends ApiPageSummary {
-    content: string;
     deletedAt: string | null;
 }
-export interface ApiJobRun {
+export interface ApiPageChange {
     id: string;
-    status: RunStatus;
-    createdAt: string;
+    /** The server version the edit was made on, or null for a page this device created. */
+    baseVersion: number | null;
+    title: string;
+    content: string;
+    icon: string | null;
+    deleted: boolean;
+}
+/** `gone`: the page was purged on the server, so a change with a base version cannot apply. */
+export type ApiChangeResult =
+    | { id: string; status: 'applied' | 'conflict'; page: ApiSyncPage }
+    | { id: string; status: 'gone' };
+/** `cancelled`: the automation was deleted or paused, or the API shut down, mid-run. Not a failure. */
+export type AutomationRunStatus = 'running' | 'succeeded' | 'failed' | 'cancelled';
+export interface ApiAutomationRunSummary {
+    id: string;
+    status: AutomationRunStatus;
+    startedAt: string;
     finishedAt: string | null;
 }
-export interface ApiJob {
+export interface ApiAutomation {
     id: string;
     name: string;
-    prompt: string;
+    description: string;
+    /** Cron expression, evaluated in `timezone`. */
     schedule: string;
     timezone: string;
     enabled: boolean;
+    /** The deployed version; each approved deploy adds one. */
+    version: number;
     nextRunAt: string | null;
     lastRunAt: string | null;
     createdAt: string;
     updatedAt: string;
-    lastRun?: ApiJobRun | null;
-    recentRuns?: ApiRun[];
+    lastRun?: ApiAutomationRunSummary | null;
 }
-export interface JobInput {
+export interface ApiAutomationRun extends ApiAutomationRunSummary {
+    automationId: string;
+    version: number;
+    trigger: 'schedule' | 'manual';
+    error: string | null;
+    output: string | null;
+    costUsd: number;
+}
+/** Code proposed for approval. Nothing runs until the user approves it. */
+export interface ApiAutomationDeploy {
+    id: string;
+    /** Null when the deploy creates a new automation. */
+    automationId: string | null;
     name: string;
-    prompt: string;
+    description: string;
     schedule: string;
-    timezone?: string;
-    enabled?: boolean;
+    timezone: string;
+    code: string;
+    status: 'pending' | 'approved' | 'rejected';
+    /** Who proposed it: the agent in a chat, an unattended automation run, or the user directly. */
+    origin: 'chat' | 'automation' | 'user';
+    /** The agent run that proposed it, if one did. */
+    runId: string | null;
+    createdAt: string;
+    decidedAt: string | null;
+    /** The deployed version this would replace. */
+    current: {
+        version: number;
+        name: string;
+        schedule: string;
+        timezone: string;
+        code: string;
+    } | null;
+}
+export interface ApiTimeline {
+    runs: (ApiAutomationRun & { name: string })[];
+    upcoming: { automationId: string; name: string; at: string }[];
+}
+export interface ApiNotification {
+    id: number;
+    title: string;
+    body: string | null;
+    source: string | null;
+    createdAt: string;
+}
+/** A server in the API's MCP registry, as `GET /mcp-servers` shows it: never its secrets. */
+export interface ApiMcpServer {
+    id: string;
+    name: string;
+    transport: 'http' | 'sse' | 'stdio';
+    /** For display only: the scheme and host, plus "/…" when the URL has a path. Never send it
+     *  back as the server's URL. */
+    url: string | null;
+    command: string | null;
+    argCount: number;
+    headerNames: string[];
+    envNames: string[];
+    enabled: boolean;
+    /** The API cannot decrypt this server's stored secrets (its key changed). */
+    secretsUnavailable?: true;
 }
 
-export type RunEvent = (
-    | { type: 'message'; role: 'assistant' | 'tool'; content: ContentBlock[] }
-    | { type: 'log'; level: 'debug' | 'info' | 'warn' | 'error'; message: string; data?: unknown }
-    | { type: 'session'; harness: string; sessionId: string }
-    | { type: 'usage'; model: string; costUsd: number }
-    | { type: 'status'; status: RunStatus; error?: string }
-) & { id: number; runId: string; createdAt: string };
+export interface ApiViewTotals {
+    views: number;
+    /** Distinct visitor IPs. */
+    visitors: number;
+}
+export interface ApiViewSummary {
+    groupBy: 'day' | 'origin' | 'path' | 'referrer';
+    totals: ApiViewTotals;
+    /** Biggest first, except `day` groups, which are oldest first and keyed `YYYY-MM-DD`. */
+    groups: (ApiViewTotals & { key: string | null })[];
+}
 
 interface Paged<T> {
     items: T[];
@@ -126,42 +202,25 @@ async function errorFrom(res: Response): Promise<ApiError> {
     }
 }
 
+/** Codes whose own message would read as jargon in the UI. */
+const plain: Record<string, string> = {
+    rate_limited: 'The API is getting too many requests. Try again in a minute.',
+    payload_too_large: 'That is more than the API accepts in one request.',
+};
+
 /** One readable sentence for any failure, for the UI. */
 export function describeError(e: unknown): string {
-    if (e instanceof ApiError) return e.status === 401 ? 'The API rejected the token.' : e.message;
+    if (e instanceof ApiError) {
+        if (e.status === 401) return 'The API rejected the token.';
+        const known = plain[e.code];
+        if (known) return known;
+        if (e.code === 'conflict') return `Changed elsewhere first: ${e.message}`;
+        if (e.code === 'invalid_request') return `The API refused it: ${e.message}`;
+        return e.message;
+    }
     if (e instanceof Error) return e.message;
     return String(e);
 }
-
-/** Splits an SSE byte stream into `{ event, data }` frames. */
-async function* frames(
-    body: ReadableStream<Uint8Array>,
-): AsyncGenerator<{ event: string; data: string }> {
-    const reader = body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    try {
-        for (;;) {
-            const { value, done } = await reader.read();
-            if (done) return;
-            buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
-            let end: number;
-            while ((end = buffer.indexOf('\n\n')) !== -1) {
-                const lines = buffer.slice(0, end).split('\n');
-                buffer = buffer.slice(end + 2);
-                const field = (name: string) =>
-                    lines
-                        .filter((l) => l.startsWith(name + ':'))
-                        .map((l) => l.slice(name.length + 1).replace(/^ /, ''));
-                yield { event: field('event')[0] ?? 'message', data: field('data').join('\n') };
-            }
-        }
-    } finally {
-        reader.releaseLock();
-    }
-}
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export class Api {
     readonly baseUrl: string;
@@ -173,16 +232,15 @@ export class Api {
     }
 
     private async req<T>(method: string, path: string, body?: unknown): Promise<T> {
+        const headers: Record<string, string> = { authorization: `Bearer ${this.token}` };
+        const init: RequestInit = { method, headers };
+        if (body !== undefined) {
+            headers['content-type'] = 'application/json';
+            init.body = JSON.stringify(body);
+        }
         let res: Response;
         try {
-            res = await fetch(this.baseUrl + path, {
-                method,
-                headers: {
-                    authorization: `Bearer ${this.token}`,
-                    ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
-                },
-                body: body === undefined ? undefined : JSON.stringify(body),
-            });
+            res = await fetch(this.baseUrl + path, init);
         } catch {
             throw new ApiError(0, 'unreachable', `Cannot reach the API at ${this.baseUrl}`);
         }
@@ -207,11 +265,6 @@ export class Api {
         return out;
     }
 
-    /** Validates the URL and token with the cheapest authenticated call. */
-    check() {
-        return this.req<Paged<ApiConversation>>('GET', '/conversations?limit=1');
-    }
-
     listConversations() {
         return this.all<ApiConversation>('/conversations', 400);
     }
@@ -224,17 +277,15 @@ export class Api {
     deleteConversation(id: string) {
         return this.req<ApiConversation>('DELETE', `/conversations/${id}`);
     }
-    sendMessage(id: string, text: string) {
+    /** With `from`, the message replaces that user message and everything after it. */
+    sendMessage(id: string, text: string, from?: string) {
         return this.req<{ message: ApiMessage; run: ApiRun }>(
             'POST',
             `/conversations/${id}/messages`,
-            { text },
+            from ? { text, from } : { text },
         );
     }
 
-    getRun(id: string) {
-        return this.req<ApiRun>('GET', `/runs/${id}`);
-    }
     /** The newest runs of a conversation (one page). */
     async listRuns(conversationId: string) {
         return (
@@ -245,63 +296,104 @@ export class Api {
         return this.req<ApiRun>('POST', `/runs/${id}/cancel`);
     }
 
-    /** Every event of a run as it happens, resuming after a dropped connection. Ends on a terminal status. */
-    async *streamRun(runId: string, after = 0, signal?: AbortSignal): AsyncGenerator<RunEvent> {
-        let retries = 5;
-        for (;;) {
-            try {
-                const res = await fetch(`${this.baseUrl}/runs/${runId}/stream?after=${after}`, {
-                    headers: { authorization: `Bearer ${this.token}`, accept: 'text/event-stream' },
-                    signal,
-                });
-                if (!res.ok || !res.body) throw await errorFrom(res);
-                for await (const frame of frames(res.body)) {
-                    if (frame.event === 'ping' || !frame.data) continue;
-                    const ev = JSON.parse(frame.data) as RunEvent;
-                    after = ev.id;
-                    yield ev;
-                    if (ev.type === 'status' && TERMINAL.includes(ev.status)) return;
-                }
-                if (retries-- <= 0) return; // closed cleanly without a terminal status; give up quietly
-            } catch (e) {
-                if (signal?.aborted || e instanceof ApiError || retries-- <= 0) throw e;
-            }
-            await sleep(1000);
-        }
+    /** Every event of a run as it happens, from the start. Reconnects after a dropped connection
+     *  or a 5xx, throws a 4xx at once (as an `ApiError`) and throws once retries run out; ends
+     *  after the run's terminal status. */
+    streamRun(runId: string, signal?: AbortSignal): AsyncGenerator<RunEvent> {
+        return streamRunEvents({
+            baseUrl: this.baseUrl,
+            token: this.token,
+            runId,
+            ...(signal ? { signal } : {}),
+            toError: errorFrom,
+        });
     }
 
-    listPages() {
-        return this.all<ApiPageSummary>('/pages');
+    /** Up to 500 page edits in one request (10 MiB body); each answers `applied`, `conflict`
+     *  or `gone`. */
+    syncPush(changes: ApiPageChange[]) {
+        return this.req<{ results: ApiChangeResult[] }>('POST', '/sync/push', { changes });
     }
-    getPage(id: string) {
-        return this.req<ApiPage>('GET', `/pages/${id}`);
-    }
-    createPage(input: { id?: string; title?: string; content?: string }) {
-        return this.req<ApiPage>('POST', '/pages', input);
-    }
-    updatePage(id: string, patch: { title?: string; content?: string }) {
-        return this.req<ApiPage>('PATCH', `/pages/${id}`, patch);
-    }
-    deletePage(id: string) {
-        return this.req<ApiPage>('DELETE', `/pages/${id}`);
+    /** Pages written after `cursor`, deletions included, in write order. */
+    syncPull(cursor: string, limit: number) {
+        return this.req<{ pages: ApiSyncPage[]; cursor: string; hasMore: boolean }>(
+            'GET',
+            `/sync/pull?cursor=${encodeURIComponent(cursor)}&limit=${limit}`,
+        );
     }
 
-    async listJobs() {
-        return (await this.req<{ items: ApiJob[] }>('GET', '/jobs')).items;
+    async listAutomations() {
+        return (await this.req<{ items: ApiAutomation[] }>('GET', '/automations')).items;
     }
-    getJob(id: string) {
-        return this.req<ApiJob>('GET', `/jobs/${id}`);
+    setAutomationEnabled(id: string, enabled: boolean) {
+        return this.req<ApiAutomation>('PATCH', `/automations/${id}`, { enabled });
     }
-    createJob(input: JobInput) {
-        return this.req<ApiJob>('POST', '/jobs', input);
+    deleteAutomation(id: string) {
+        return this.req<ApiAutomation>('DELETE', `/automations/${id}`);
     }
-    updateJob(id: string, patch: Partial<JobInput>) {
-        return this.req<ApiJob>('PATCH', `/jobs/${id}`, patch);
+    triggerAutomation(id: string) {
+        return this.req<ApiAutomationRun>('POST', `/automations/${id}/trigger`);
     }
-    deleteJob(id: string) {
-        return this.req<ApiJob>('DELETE', `/jobs/${id}`);
+    async listDeploys() {
+        return (
+            await this.req<{ items: ApiAutomationDeploy[] }>(
+                'GET',
+                '/automations/deploys?status=pending',
+            )
+        ).items;
     }
-    triggerJob(id: string) {
-        return this.req<ApiRun>('POST', `/jobs/${id}/trigger`);
+    getDeploy(id: string) {
+        return this.req<ApiAutomationDeploy>('GET', `/automations/deploys/${id}`);
+    }
+    approveDeploy(id: string) {
+        return this.req<ApiAutomation>('POST', `/automations/deploys/${id}/approve`);
+    }
+    rejectDeploy(id: string) {
+        return this.req<ApiAutomationDeploy>('POST', `/automations/deploys/${id}/reject`);
+    }
+    /** Runs that started in [from, to) and the scheduled slots still ahead in it. */
+    timeline(from: Date, to: Date) {
+        const q = `from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`;
+        return this.req<ApiTimeline>('GET', `/automations/timeline?${q}`);
+    }
+    /** Notifications after id `after`, oldest first; with `after` null, the newest `limit`.
+     *  `latestId` is the newest id on the server (null when there are none). */
+    notifications(after: number | null, limit = 50) {
+        const q = after === null ? `limit=${limit}` : `after=${after}&limit=${limit}`;
+        return this.req<{ items: ApiNotification[]; latestId: number | null }>(
+            'GET',
+            `/notifications?${q}`,
+        );
+    }
+
+    /** Page view totals since `from`, overall and per `groupBy`; days fall in `timezone`. */
+    viewSummary(
+        groupBy: ApiViewSummary['groupBy'],
+        opts: { from: Date; timezone: string; origin?: string },
+    ) {
+        const q = new URLSearchParams({
+            groupBy,
+            from: opts.from.toISOString(),
+            timezone: opts.timezone,
+        });
+        if (opts.origin) q.set('origin', opts.origin);
+        return this.req<ApiViewSummary>('GET', `/metrics/views/summary?${q}`);
+    }
+
+    async listMcpServers() {
+        return (await this.req<{ items: ApiMcpServer[] }>('GET', '/mcp-servers')).items;
+    }
+    createMcpServer(input: {
+        name: string;
+        transport: ApiMcpServer['transport'];
+        url: string;
+        enabled: boolean;
+    }) {
+        return this.req<ApiMcpServer>('POST', '/mcp-servers', input);
+    }
+    /** `url` replaces the stored one, so send it only when the user typed a new one: the listed
+     *  `url` is a redacted display form. */
+    updateMcpServer(id: string, patch: { url?: string; enabled?: boolean }) {
+        return this.req<ApiMcpServer>('PATCH', `/mcp-servers/${id}`, patch);
     }
 }

@@ -11,13 +11,15 @@ import { parseArgs } from 'node:util';
 import { loadRunnerEnv } from './env.js';
 
 /** Words the desktop app looks for on stderr to drop a session id it should stop resuming. */
-export const UNKNOWN_SESSION = 'No conversation found';
+const UNKNOWN_SESSION = 'No conversation found';
 const WAITING_HINT_MS = 5_000;
+/** How long an interrupted turn waits for its cancel request before giving up on it. */
+const CANCEL_WAIT_MS = 3_000;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** A run event as the stream-json lines Claude Code prints, or none for events it has no line for. */
-export function toStreamJson(event: RunEvent, sessionId: string): object[] {
+function toStreamJson(event: RunEvent, sessionId: string): object[] {
     if (event.type !== 'message') return [];
     if (event.role === 'assistant') {
         const content = event.content.flatMap((block): object[] => {
@@ -53,7 +55,7 @@ export function toStreamJson(event: RunEvent, sessionId: string): object[] {
         : [];
 }
 
-export interface BridgeIO {
+interface BridgeIO {
     write(line: object): void;
     warn(message: string): void;
 }
@@ -96,9 +98,20 @@ export async function bridge(options: {
         model: 'lyfestyle',
     });
 
-    const cancel = () =>
-        void api.runs[':id'].cancel.$post({ param: { id: run.id } }).catch(() => {});
-    options.signal?.addEventListener('abort', cancel, { once: true });
+    // Interrupted, the run is cancelled so no runner goes on spending on it; awaited (briefly)
+    // before the bridge exits, or the request would die with the process.
+    let cancelling: Promise<unknown> | undefined;
+    const cancel = () => {
+        cancelling = api.runs[':id'].cancel
+            .$post(
+                { param: { id: run.id } },
+                { init: { signal: AbortSignal.timeout(CANCEL_WAIT_MS) } },
+            )
+            .catch(() => {});
+    };
+    // An interrupt that came while the run was being created fired before this listener existed.
+    if (options.signal?.aborted) cancel();
+    else options.signal?.addEventListener('abort', cancel, { once: true });
     const hint = setTimeout(
         () => io.warn('Waiting for a runner to pick this turn up; is `pnpm runner` running?'),
         WAITING_HINT_MS,
@@ -117,6 +130,7 @@ export async function bridge(options: {
     } finally {
         clearTimeout(hint);
         options.signal?.removeEventListener('abort', cancel);
+        await cancelling;
     }
 
     const final = await unwrap(api.runs[':id'].$get({ param: { id: run.id } }));

@@ -1,333 +1,215 @@
-import { useEffect, useState } from 'react';
-import Markdown from '../components/Markdown';
-import { useApp } from '../store/app';
-import { localTimeZone, useData } from '../store/data';
-import { describe, nextRun, runAutomation } from '../lib/scheduler';
-import { id as newId, relativeTime } from '../lib/util';
-import type { Automation, Trigger } from '../lib/types';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import Masthead from '../components/Masthead';
+import DeployCard from '../components/DeployCard';
+import Timeline from '../components/Timeline';
+import { confirmAction } from '../components/Confirm';
+import { useAttempt, type Attempt } from '../hooks/useAttempt';
+import type { ApiAutomationRunSummary, ApiTimeline } from '../lib/api';
+import { describeCron } from '../lib/cron';
+import { addDays, dayLabel, relativeTime, startOfDay, when } from '../lib/time';
+import { getApi, useData } from '../store/data';
 
-const blank = (): Automation => ({
-    id: newId(),
-    name: '',
-    prompt: '',
-    trigger: { type: 'daily', time: '08:00' },
-    enabled: true,
-    createdAt: Date.now(),
-});
-
-const ACTIVE = new Set(['queued', 'running']);
-
-export default function Automations({ id }: { id?: string }) {
-    const automations = useData((s) => s.automations);
+export default function Automations() {
     const mode = useData((s) => s.mode);
-    const saveAutomation = useData((s) => s.saveAutomation);
-    const deleteAutomation = useData((s) => s.deleteAutomation);
-    const triggerAutomation = useData((s) => s.triggerAutomation);
-    const loadLastRun = useData((s) => s.loadLastRun);
-    const navigate = useApp((s) => s.navigate);
-    const [sel, setSel] = useState<string>(id ?? automations[0]?.id ?? 'new');
-    const existing = automations.find((a) => a.id === sel);
-    const [draft, setDraft] = useState<Automation>(existing ?? blank());
-    const [saved, setSaved] = useState(false);
-    const [problem, setProblem] = useState<string | undefined>();
-    const remote = mode === 'api';
+    if (mode !== 'api')
+        return (
+            <div className="page">
+                <div className="page-narrow auto">
+                    <Masthead eyebrow="server only" title="Automations" />
+                    <p className="note">
+                        Automations run on the Lyfestyle server. Connect it in settings to see and
+                        approve them.
+                    </p>
+                </div>
+            </div>
+        );
+    return <Remote />;
+}
 
-    // Reset the form when the selection changes (not when a refresh replaces the object, which
-    // would discard unsaved edits). Done during render so no effect has to set state.
-    const selectionKey = sel + (existing ? ':saved' : ':new');
-    const [prevSelectionKey, setPrevSelectionKey] = useState(selectionKey);
-    if (selectionKey !== prevSelectionKey) {
-        setPrevSelectionKey(selectionKey);
-        setDraft(existing ?? blank());
-        setSaved(false);
-        setProblem(undefined);
-    }
+function Remote() {
+    const automations = useData((s) => s.automations);
+    const deploys = useData((s) => s.deploys);
+    const loadAutomations = useData((s) => s.loadAutomations);
+    const [day, setDay] = useState(() => startOfDay(Date.now()));
+    const [now, setNow] = useState(() => Date.now());
+    const [timeline, setTimeline] = useState<ApiTimeline | null>(null);
+    const [problem, attempt] = useAttempt();
+    /** Numbers each load; a response that a newer load overtook (paging days quickly) is dropped. */
+    const loads = useRef(0);
 
-    // API mode: while the last run is queued or running, poll it; fetch its output once it ends.
-    const lastRun = existing?.lastRun;
+    const load = useCallback(async () => {
+        const n = ++loads.current;
+        await attempt(async () => {
+            const api = getApi();
+            if (!api) return;
+            const [t] = await Promise.all([
+                api.timeline(new Date(day), new Date(addDays(day, 1))),
+                loadAutomations(),
+            ]);
+            if (n !== loads.current) return;
+            setTimeline(t);
+            setNow(Date.now());
+        });
+    }, [attempt, day, loadAutomations]);
+
+    // Poll while the page is open: faster while something is running so its mark grows and ends.
+    const running =
+        automations.some((a) => a.lastRun?.status === 'running') ||
+        !!timeline?.runs.some((r) => r.status === 'running');
     useEffect(() => {
-        if (!remote || !existing || !lastRun) return;
-        if (ACTIVE.has(lastRun.status)) {
-            const t = setInterval(() => {
-                void loadLastRun(existing.id);
-            }, 4000);
-            return () => clearInterval(t);
-        }
-        if (lastRun.output === undefined && lastRun.error === undefined)
-            void loadLastRun(existing.id);
-    }, [remote, existing, lastRun, loadLastRun]);
+        // oxlint-disable-next-line react/set-state-in-effect -- load fetches first; state is set after the await
+        void load();
+        const t = setInterval(
+            () => {
+                if (document.visibilityState === 'visible') void load();
+            },
+            running ? 4_000 : 15_000,
+        );
+        return () => clearInterval(t);
+    }, [load, running]);
 
-    const set = (patch: Partial<Automation>) => {
-        setDraft((d) => ({ ...d, ...patch }));
-        setSaved(false);
-    };
-    const setTrigger = (t: Trigger) => set({ trigger: t, nextRunAt: undefined });
-    const valid =
-        draft.name.trim().length > 0 &&
-        draft.prompt.trim().length > 0 &&
-        (draft.trigger.type !== 'cron' || draft.trigger.expr.trim().length > 0);
+    const today = startOfDay(now) === day;
+    const enabled = automations.filter((a) => a.enabled).length;
+    const eyebrow = automations.length
+        ? `${automations.length} deployed · ${enabled} scheduled`
+        : 'none deployed';
 
-    const attempt = async <T,>(fn: () => Promise<T>): Promise<T | undefined> => {
-        try {
-            setProblem(undefined);
-            return await fn();
-        } catch (e) {
-            setProblem(e instanceof Error ? e.message : String(e));
-            return undefined;
-        }
-    };
-
-    const save = async () => {
-        if (!valid) return;
-        const a: Automation = {
-            ...draft,
-            name: draft.name.trim(),
-            nextRunAt: !remote && draft.enabled ? nextRun(draft) : undefined,
-        };
-        const stored = await attempt(() => saveAutomation(a));
-        if (!stored) return;
-        setSel(stored.id);
-        setSaved(true);
-    };
-    const run = async () => {
-        if (!valid) return;
-        const a: Automation = { ...draft, name: draft.name.trim() };
-        const stored = await attempt(() => saveAutomation(a));
-        if (!stored) return;
-        setSel(stored.id);
-        if (remote) {
-            await attempt(() => triggerAutomation(stored.id));
-            return;
-        }
-        const cid = await runAutomation(stored);
-        navigate({ name: 'conversation', id: cid });
-    };
-
-    const triggerKind = draft.trigger.type;
     return (
-        <div className="two">
-            <aside className="col-list">
-                <div className="col-head">
-                    <span>Automations</span>
-                    <button
-                        className="plus"
-                        aria-label="New automation"
-                        onClick={() => setSel('new')}
-                    >
-                        <svg viewBox="0 0 24 24">
-                            <path d="M12 5v14M5 12h14" />
-                        </svg>
-                    </button>
-                </div>
-                {automations.map((a) => (
-                    <button
-                        key={a.id}
-                        className={'doc-row' + (a.id === sel ? ' active' : '')}
-                        onClick={() => setSel(a.id)}
-                    >
-                        <i className={'dot' + (a.enabled ? '' : ' off')} />
-                        <span className="t">{a.name}</span>
-                        <span className="m">{describe(a)}</span>
-                    </button>
-                ))}
-            </aside>
-            <section className="col-main">
-                <div className="form">
-                    <h1 className="serif">{existing ? existing.name : 'New automation'}</h1>
-                    <div className="field">
-                        <label htmlFor="a-name">Name</label>
-                        <input
-                            id="a-name"
-                            value={draft.name}
-                            onChange={(e) => set({ name: e.target.value })}
-                            placeholder="Morning briefing"
-                        />
-                    </div>
-                    <div className="field">
-                        <label htmlFor="a-prompt">Prompt</label>
-                        <textarea
-                            id="a-prompt"
-                            value={draft.prompt}
-                            onChange={(e) => set({ prompt: e.target.value })}
-                            placeholder="What the agent should do each time this runs. It receives this text exactly as a new conversation."
-                        />
-                        <span className="note">
-                            {remote
-                                ? 'Each run is executed by the runner; its output shows below.'
-                                : 'Each run becomes a conversation you can open from the sidebar.'}
-                        </span>
-                    </div>
-                    <div className="field">
-                        <label htmlFor="a-trigger">When</label>
-                        <div className="inline">
-                            <select
-                                id="a-trigger"
-                                value={triggerKind}
-                                onChange={(e) => {
-                                    const t = e.target.value as Trigger['type'];
-                                    setTrigger(
-                                        t === 'interval'
-                                            ? { type: 'interval', minutes: 60 }
-                                            : t === 'daily'
-                                              ? { type: 'daily', time: '08:00' }
-                                              : t === 'cron'
-                                                ? { type: 'cron', expr: '0 9 * * 1-5' }
-                                                : { type: 'manual' },
-                                    );
-                                }}
-                            >
-                                <option value="daily">Daily at</option>
-                                <option value="interval">Every</option>
-                                {remote ? (
-                                    <option value="cron">Cron</option>
-                                ) : (
-                                    <option value="manual">Manual</option>
-                                )}
-                            </select>
-                            {draft.trigger.type === 'daily' && (
-                                <input
-                                    id="a-time"
-                                    type="time"
-                                    value={draft.trigger.time}
-                                    onChange={(e) =>
-                                        setTrigger({ type: 'daily', time: e.target.value })
-                                    }
-                                />
-                            )}
-                            {draft.trigger.type === 'interval' && (
-                                <>
-                                    <input
-                                        id="a-min"
-                                        type="number"
-                                        min={1}
-                                        value={draft.trigger.minutes}
-                                        onChange={(e) =>
-                                            setTrigger({
-                                                type: 'interval',
-                                                minutes: Math.max(1, Number(e.target.value) || 1),
-                                            })
-                                        }
-                                    />
-                                    <span className="note">minutes</span>
-                                </>
-                            )}
-                            {draft.trigger.type === 'cron' && (
-                                <input
-                                    id="a-cron"
-                                    value={draft.trigger.expr}
-                                    spellCheck={false}
-                                    onChange={(e) =>
-                                        setTrigger({ type: 'cron', expr: e.target.value })
-                                    }
-                                    placeholder="0 9 * * 1-5"
-                                />
-                            )}
-                        </div>
-                        <span className="note">
-                            {remote
-                                ? `Evaluated by the API in ${draft.timezone ?? localTimeZone()}. Intervals of an hour or more round to whole hours.`
-                                : 'Scheduled runs happen while Lyfestyle is open.'}
-                        </span>
-                    </div>
-                    <label className="switch">
-                        <input
-                            type="checkbox"
-                            checked={draft.enabled}
-                            onChange={(e) => set({ enabled: e.target.checked })}
-                        />
-                        <i />
-                        {remote ? 'Scheduled' : 'Enabled'}
-                    </label>
-                    <div className="actions">
-                        <button className="btn" disabled={!valid} onClick={() => void save()}>
-                            {saved ? 'Saved' : 'Save'}
-                        </button>
-                        <button className="link" disabled={!valid} onClick={() => void run()}>
-                            Run now
-                        </button>
-                        {existing && (
+        <div className="page">
+            <div className="page-narrow auto">
+                <Masthead eyebrow={eyebrow} title="Automations" />
+                {problem && <div className="err select-text">{problem}</div>}
+
+                {deploys.length > 0 && (
+                    <section className="auto-sec">
+                        <h2 className="sec-h">
+                            awaiting approval <span>{deploys.length}</span>
+                        </h2>
+                        {deploys.map((d) => (
+                            <DeployCard key={d.id} deploy={d} attempt={attempt} onDecided={load} />
+                        ))}
+                    </section>
+                )}
+
+                <section className="auto-sec">
+                    <div className="sec-head">
+                        <h2 className="sec-h">{today ? 'today' : dayLabel(day)}</h2>
+                        <div className="day-nav">
                             <button
-                                className="link danger"
-                                onClick={() => {
-                                    void attempt(() => deleteAutomation(existing.id));
-                                    setSel('new');
-                                }}
+                                className="step"
+                                aria-label="Previous day"
+                                onClick={() => setDay((d) => addDays(d, -1))}
                             >
-                                Delete
+                                ‹
                             </button>
-                        )}
-                    </div>
-                    {problem && <div className="err select-text">{problem}</div>}
-                    {existing && (
-                        <div className="status">
-                            {remote ? (
-                                <>
-                                    <span>
-                                        Last run:{' '}
-                                        <b>
-                                            {lastRun
-                                                ? `${relativeTime(lastRun.createdAt)} ago · ${lastRun.status}`
-                                                : 'never'}
-                                        </b>
-                                    </span>
-                                    <span>
-                                        Next run:{' '}
-                                        <b>
-                                            {existing.enabled && existing.nextRunAt
-                                                ? new Date(existing.nextRunAt).toLocaleString()
-                                                : 'paused'}
-                                        </b>
-                                    </span>
-                                    {lastRun?.error && (
-                                        <div className="err select-text">{lastRun.error}</div>
-                                    )}
-                                    {lastRun?.output && (
-                                        <div className="run-output select-text">
-                                            <Markdown text={lastRun.output} />
-                                        </div>
-                                    )}
-                                </>
-                            ) : (
-                                <>
-                                    <span>
-                                        Last run:{' '}
-                                        <b>
-                                            {existing.lastRunAt
-                                                ? relativeTime(existing.lastRunAt) + ' ago'
-                                                : 'never'}
-                                        </b>
-                                        {existing.lastConversationId && (
-                                            <>
-                                                {' '}
-                                                ·{' '}
-                                                <button
-                                                    className="link"
-                                                    onClick={() =>
-                                                        navigate({
-                                                            name: 'conversation',
-                                                            id: existing.lastConversationId!,
-                                                        })
-                                                    }
-                                                >
-                                                    open
-                                                </button>
-                                            </>
-                                        )}
-                                    </span>
-                                    <span>
-                                        Next run:{' '}
-                                        <b>
-                                            {existing.enabled && existing.nextRunAt
-                                                ? new Date(existing.nextRunAt).toLocaleString()
-                                                : 'not scheduled'}
-                                        </b>
-                                    </span>
-                                </>
+                            <span>{dayLabel(day)}</span>
+                            <button
+                                className="step"
+                                aria-label="Next day"
+                                onClick={() => setDay((d) => addDays(d, 1))}
+                            >
+                                ›
+                            </button>
+                            {!today && (
+                                <button
+                                    className="btn"
+                                    onClick={() => setDay(startOfDay(Date.now()))}
+                                >
+                                    today
+                                </button>
                             )}
                         </div>
+                    </div>
+                    <Timeline day={day} now={now} automations={automations} data={timeline} />
+                </section>
+
+                <section className="auto-sec">
+                    <h2 className="sec-h">deployed</h2>
+                    {automations.length === 0 && (
+                        <p className="empty">None yet. Ask the agent to build one.</p>
                     )}
-                </div>
-            </section>
+                    <div className="rows">
+                        {automations.map((a) => (
+                            <AutomationRow key={a.id} id={a.id} attempt={attempt} reload={load} />
+                        ))}
+                    </div>
+                </section>
+            </div>
+        </div>
+    );
+}
+
+/** The last run in a word or two: `running`, `ok 3h`, `failed 2d`, `cancelled 5m`, `never run`. */
+function lastRunLabel(last: ApiAutomationRunSummary | null | undefined): string {
+    if (!last) return 'never run';
+    if (last.status === 'running') return 'running';
+    const word = last.status === 'succeeded' ? 'ok' : last.status;
+    return `${word} ${relativeTime(Date.parse(last.startedAt))}`;
+}
+
+function AutomationRow({
+    id,
+    attempt,
+    reload,
+}: {
+    id: string;
+    attempt: Attempt;
+    reload: () => Promise<void>;
+}) {
+    const a = useData((s) => s.automations.find((x) => x.id === id));
+    const setEnabled = useData((s) => s.setAutomationEnabled);
+    const remove = useData((s) => s.deleteAutomation);
+    const trigger = useData((s) => s.triggerAutomation);
+    /** The switch's request is in flight; a second flip would race it. */
+    const [switching, setSwitching] = useState(false);
+    if (!a) return null;
+
+    const last = a.lastRun;
+    const next = a.enabled && a.nextRunAt ? `next ${when(a.nextRunAt)}` : 'paused';
+    const del = async () => {
+        if (!(await confirmAction(`Delete "${a.name}"? This cannot be undone.`))) return;
+        await attempt(() => remove(a.id));
+    };
+    const toggle = async (on: boolean) => {
+        setSwitching(true);
+        await attempt(() => setEnabled(a.id, on));
+        setSwitching(false);
+    };
+
+    return (
+        <div className="row auto-row">
+            <div className="open">
+                <span className="t">
+                    {a.name}
+                    <span className="d">{a.description || ' '}</span>
+                </span>
+                <span className="c sched" title={`${a.schedule} · ${a.timezone}`}>
+                    {describeCron(a.schedule)}
+                </span>
+                <span className="c next">{next}</span>
+                <span className={'c last ' + (last?.status ?? '')}>{lastRunLabel(last)}</span>
+            </div>
+            <span className="acts">
+                <button
+                    className="btn"
+                    disabled={last?.status === 'running'}
+                    onClick={() => void attempt(() => trigger(a.id)).then(reload)}
+                >
+                    run now
+                </button>
+                <button className="btn danger" onClick={() => void del()}>
+                    delete
+                </button>
+            </span>
+            <label className="switch" aria-label={a.enabled ? 'Pause' : 'Resume'}>
+                <input
+                    type="checkbox"
+                    checked={a.enabled}
+                    disabled={switching}
+                    onChange={(e) => void toggle(e.target.checked)}
+                />
+                <i />
+            </label>
         </div>
     );
 }

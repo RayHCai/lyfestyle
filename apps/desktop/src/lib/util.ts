@@ -10,27 +10,32 @@ export function greeting(name: string, date = new Date()): string {
     return name.trim() ? `${part}, ${name.trim()}` : part;
 }
 
-export function relativeTime(ts: number, now = Date.now()): string {
-    const s = Math.max(0, Math.round((now - ts) / 1000));
-    if (s < 60) return 'now';
-    const m = Math.round(s / 60);
-    if (m < 60) return `${m}m`;
-    const h = Math.round(m / 60);
-    if (h < 24) return `${h}h`;
-    const d = Math.round(h / 24);
-    if (d < 7) return `${d}d`;
-    return new Date(ts).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
-}
-
 export function titleFrom(text: string, max = 56): string {
-    const line = text.trim().split('\n')[0].replace(/\s+/g, ' ');
+    const line = (text.trim().split('\n')[0] ?? '').replace(/\s+/g, ' ');
     return line.length > max ? line.slice(0, max - 1).trimEnd() + '…' : line || 'Untitled';
 }
 
-export function debounce<A extends unknown[]>(fn: (...args: A) => void, ms: number) {
+/** A call held back until `ms` pass without another; `flush` makes a held call now. */
+export interface Debounced<A extends unknown[]> {
+    (...args: A): void;
+    flush(): void;
+}
+
+export function debounce<A extends unknown[]>(fn: (...args: A) => void, ms: number): Debounced<A> {
     let t: ReturnType<typeof setTimeout> | undefined;
-    return (...args: A) => {
+    let held: A | null = null;
+    const flush = () => {
         clearTimeout(t);
-        t = setTimeout(() => fn(...args), ms);
+        const args = held;
+        held = null;
+        if (args) fn(...args);
     };
+    return Object.assign(
+        (...args: A) => {
+            held = args;
+            clearTimeout(t);
+            t = setTimeout(flush, ms);
+        },
+        { flush },
+    );
 }

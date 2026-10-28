@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { validate } from '../lib/validate.js';
+import { byId, validate } from '../lib/validate.js';
 import type { Services } from '../services.js';
 import { BUILTIN_MCP_SERVER } from './service.js';
 
@@ -11,7 +11,7 @@ const fields = {
         .string()
         .regex(/^[a-z0-9][a-z0-9_-]{0,47}$/, 'Use lowercase letters, digits, - and _ (max 48)'),
     transport: z.enum(['http', 'sse', 'stdio']),
-    url: z.url().nullable(),
+    url: z.url().max(2048).nullable(),
     command: z.string().trim().min(1).max(1000).nullable(),
     args: z.array(z.string().max(1000)).max(100),
     headers: stringMap,
@@ -28,8 +28,6 @@ const createBody = z.object({
     env: fields.env.optional(),
     enabled: fields.enabled.optional(),
 });
-
-const byId = validate('param', z.object({ id: z.uuid() }));
 
 export const mcpServersRoutes = ({ mcpServers }: Services) =>
     new Hono()

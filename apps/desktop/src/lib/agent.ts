@@ -6,8 +6,8 @@
  * set through LYFESTYLE_AGENT_COMMAND can print either format.
  */
 import { call, isTauri, onEvent } from './tauri';
-import { id as newId } from './util';
 import { useData } from '../store/data';
+import { addBlocks, appendStderr, patchLast, settle, turnMessages, type Block } from './turn';
 import type { Conversation, Message } from './types';
 import * as remote from './remote';
 
@@ -25,36 +25,57 @@ export async function initAgent() {
     await onEvent<AgentEventPayload>('agent-event', handle);
 }
 
-function lastAssistant(c: Conversation): Message | undefined {
-    const m = c.messages[c.messages.length - 1];
-    return m && m.role === 'assistant' ? m : undefined;
-}
-
-function patchLast(c: Conversation, fn: (m: Message) => Message): Conversation {
-    const last = lastAssistant(c);
-    if (!last) return c;
-    const messages = c.messages.slice(0, -1).concat(fn(last));
-    return { ...c, messages, updatedAt: Date.now() };
-}
-
 export async function sendMessage(conversationId: string, text: string) {
     const data = useData.getState();
     if (data.mode === 'api') return remote.send(conversationId, text);
     const c = data.conversations[conversationId];
     if (!c || c.streaming) return;
-    const now = Date.now();
-    const user: Message = { id: newId(), role: 'user', content: text, createdAt: now };
-    const assistant: Message = {
-        id: newId(),
-        role: 'assistant',
-        content: '',
-        createdAt: now + 1,
-        live: '',
-    };
+    await start(c, c.messages.length, text, c.sessionId);
+}
+
+/** Whether `resend` works here: a conversation made while the API was unreachable has nothing to
+ *  rewind. */
+export const canResend = (c: Conversation) => !c.offline;
+
+/**
+ * Asks again from a user message: drops it and everything after, then sends `text` in its place.
+ * Editing a message and retrying a reply are both this.
+ */
+export async function resend(conversationId: string, messageId: string, text: string) {
+    const data = useData.getState();
+    const c = data.conversations[conversationId];
+    if (!c || !canResend(c) || c.streaming) return;
+    if (data.mode === 'api') return remote.send(conversationId, text, messageId);
+    const at = c.messages.findIndex((m) => m.id === messageId);
+    if (at < 0) return;
+    // The Claude Code session remembers the dropped turns, so start a fresh one and give it the
+    // kept turns as a transcript instead.
+    await start(c, at, text, undefined);
+}
+
+/** The thread as plain text, for a fresh session that has to pick up an earlier conversation. */
+function transcript(messages: Message[]): string {
+    return messages
+        .filter((m) => m.content.trim())
+        .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content.trim()}`)
+        .join('\n\n');
+}
+
+/** Keeps the first `keep` messages, appends `text` and a reply to stream into, and runs the agent. */
+async function start(c: Conversation, keep: number, text: string, sessionId: string | undefined) {
+    const data = useData.getState();
+    const conversationId = c.id;
+    const kept = c.messages.slice(0, keep);
+    const earlier = sessionId ? '' : transcript(kept);
+    const prompt = earlier
+        ? `<conversation_so_far>\n${earlier}\n</conversation_so_far>\n\n${text}`
+        : text;
+    const [user, reply] = turnMessages(text);
     data.updateConversation(conversationId, (cur) => ({
         ...cur,
-        messages: [...cur.messages, user, assistant],
-        updatedAt: now,
+        messages: [...kept, user, reply],
+        sessionId,
+        updatedAt: user.createdAt,
         streaming: true,
         stderr: '',
     }));
@@ -69,10 +90,12 @@ export async function sendMessage(conversationId: string, text: string) {
         await call('agent_send', {
             args: {
                 conversation_id: conversationId,
-                prompt: text,
-                session_id: c.sessionId ?? null,
+                prompt,
+                session_id: sessionId ?? null,
                 command: settings.agentCommand,
                 model: settings.model,
+                effort: settings.effort,
+                todo_mcp_url: settings.todoMcpUrl,
                 cwd: settings.workingDirectory || useData.getState().dataDir,
             },
         });
@@ -91,7 +114,7 @@ export async function cancel(conversationId: string) {
         // The process may already be gone; keep the reason where the thread can surface it.
         useData.getState().updateConversation(conversationId, (c) => ({
             ...c,
-            stderr: ((c.stderr ?? '') + `Stop failed: ${String(e)}\n`).slice(-4000),
+            stderr: appendStderr(c.stderr, `Stop failed: ${String(e)}`),
         }));
     }
 }
@@ -103,18 +126,19 @@ export async function openConversation(conversationId: string) {
 
 function handle(p: AgentEventPayload) {
     const data = useData.getState();
-    if (!data.conversations[p.conversation_id]) return;
+    const id = p.conversation_id;
+    if (!data.conversations[id]) return;
     if (p.kind === 'stderr') {
-        data.updateConversation(p.conversation_id, (c) => {
-            const stderr = ((c.stderr ?? '') + p.line + '\n').slice(-4000);
+        data.updateConversation(id, (c) => ({
+            ...c,
+            stderr: appendStderr(c.stderr, p.line),
             // A missing session means the CLI's history was cleared; start fresh next time.
-            const sessionId = /No conversation found/i.test(p.line) ? undefined : c.sessionId;
-            return { ...c, stderr, sessionId };
-        });
+            sessionId: /No conversation found/i.test(p.line) ? undefined : c.sessionId,
+        }));
         return;
     }
     if (p.kind === 'exit') {
-        finish(p.conversation_id, Number(p.line));
+        finish(id, Number(p.line));
         return;
     }
     const line = p.line.trim();
@@ -126,7 +150,7 @@ function handle(p: AgentEventPayload) {
         obj = null;
     }
     if (!obj || typeof obj !== 'object') {
-        data.updateConversation(p.conversation_id, (c) =>
+        data.updateConversation(id, (c) =>
             patchLast(c, (m) => ({ ...m, content: m.content + line + '\n' })),
         );
         return;
@@ -135,47 +159,30 @@ function handle(p: AgentEventPayload) {
     const sessionId = typeof obj.session_id === 'string' ? obj.session_id : undefined;
 
     if (type === 'system') {
-        if (sessionId) data.updateConversation(p.conversation_id, (c) => ({ ...c, sessionId }));
+        if (sessionId) data.updateConversation(id, (c) => ({ ...c, sessionId }));
         return;
     }
     if (type === 'stream_event') {
         const ev = obj.event as
             { type?: string; delta?: { type?: string; text?: string } } | undefined;
-        if (
-            ev?.type === 'content_block_delta' &&
-            ev.delta?.type === 'text_delta' &&
-            ev.delta.text
-        ) {
-            const text = ev.delta.text;
-            data.updateConversation(p.conversation_id, (c) =>
+        const text =
+            ev?.type === 'content_block_delta' && ev.delta?.type === 'text_delta' && ev.delta.text;
+        if (text)
+            data.updateConversation(id, (c) =>
                 patchLast(c, (m) => ({ ...m, live: (m.live ?? '') + text })),
             );
-        }
         return;
     }
     if (type === 'assistant') {
-        const msg = obj.message as
-            { content?: Array<{ type: string; text?: string; name?: string }> } | undefined;
-        const blocks = msg?.content ?? [];
-        data.updateConversation(p.conversation_id, (c) =>
-            patchLast(c, (m) => {
-                let content = m.content;
-                const tools = [...(m.tools ?? [])];
-                for (const b of blocks) {
-                    if (b.type === 'text' && b.text)
-                        content += (content && !content.endsWith('\n\n') ? '\n\n' : '') + b.text;
-                    else if (b.type === 'tool_use' && b.name) tools.push(b.name);
-                }
-                return { ...m, content, tools, live: '' };
-            }),
-        );
+        const msg = obj.message as { content?: Block[] } | undefined;
+        data.updateConversation(id, (c) => patchLast(c, (m) => addBlocks(m, msg?.content ?? [])));
         return;
     }
     if (type === 'result') {
         const result = typeof obj.result === 'string' ? obj.result : '';
         const isError =
             obj.is_error === true || (typeof obj.subtype === 'string' && obj.subtype !== 'success');
-        data.updateConversation(p.conversation_id, (c) =>
+        data.updateConversation(id, (c) =>
             patchLast({ ...c, sessionId: sessionId ?? c.sessionId }, (m) => ({
                 ...m,
                 content: m.content.trim() ? m.content : result,
@@ -188,21 +195,17 @@ function handle(p: AgentEventPayload) {
 
 function finish(conversationId: string, code: number, error?: string) {
     const data = useData.getState();
-    const c = data.conversations[conversationId];
-    if (!c) return;
+    if (!data.conversations[conversationId]) return;
     data.updateConversation(conversationId, (cur) =>
-        patchLast({ ...cur, streaming: false }, (m) => {
-            const content = (m.content + (m.live ?? '')).trim();
-            let err = error ?? m.error;
-            if (!content && !err) {
-                const tail = (cur.stderr ?? '').trim().split('\n').slice(-3).join('\n');
-                err =
-                    code === 0
-                        ? 'The agent returned nothing.'
-                        : `The agent exited with code ${code}.${tail ? '\n' + tail : ''}`;
-            }
-            return { ...m, content, live: undefined, error: err };
-        }),
+        patchLast({ ...cur, streaming: false }, (m) =>
+            settle(m, cur.stderr, error, (tail) =>
+                code === 0
+                    ? 'The agent returned nothing.'
+                    : `The agent exited with code ${code}.${tail ? '\n' + tail : ''}`,
+            ),
+        ),
     );
     void data.persistConversation(conversationId);
+    // The turn may have changed documents through the app's tool server.
+    void data.reloadFiles();
 }

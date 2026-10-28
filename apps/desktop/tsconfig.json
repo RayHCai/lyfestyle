@@ -6,6 +6,8 @@
         "moduleResolution": "bundler",
         "jsx": "react-jsx",
         "strict": true,
+        "noUncheckedIndexedAccess": true,
+        "exactOptionalPropertyTypes": true,
         "noUnusedLocals": true,
         "noUnusedParameters": true,
         "noFallthroughCasesInSwitch": true,
@@ -16,5 +18,5 @@
         "noEmit": true,
         "useDefineForClassFields": true
     },
-    "include": ["src"]
+    "include": ["src", "tests", "vite.config.ts", "vitest.config.ts"]
 }

@@ -1,14 +1,9 @@
 import { addDays, monthStart, weekStart } from '@lyfestyle/shared';
-import { and, asc, eq, gte, isNull, lt, lte, or, type SQL } from 'drizzle-orm';
-import type { Db } from '../db/client.js';
-import { goals, todos } from '../db/schema.js';
+import { fromDay, type Db, type Row, type TodoScope } from '../db/client.js';
 import { notFound } from '../lib/errors.js';
 import type { Patch } from '../lib/types.js';
 
-export type TodoScope = 'day' | 'week';
-
-type Todo = typeof todos.$inferSelect;
-type Goal = typeof goals.$inferSelect;
+export type { TodoScope } from '../db/client.js';
 
 export interface TodoInput {
     title: string;
@@ -34,7 +29,7 @@ export interface GoalInput {
 export type GoalPatch = Patch<GoalInput> & { completed?: boolean | undefined };
 
 const normalizeDate = (scope: TodoScope, date: string) =>
-    scope === 'week' ? weekStart(date) : date;
+    fromDay(scope === 'week' ? weekStart(date) : date);
 
 const completion = (completed: boolean | undefined, now: Date) =>
     completed === undefined ? {} : { completedAt: completed ? now : null };
@@ -47,22 +42,31 @@ function withCarry<T>(rows: T[], dateOf: (row: T) => string, current: string) {
 export type TodosService = ReturnType<typeof createTodosService>;
 
 export function createTodosService(db: Db, now: () => Date) {
-    const order = [asc(todos.position), asc(todos.createdAt)];
+    const order = [{ position: 'asc' }, { createdAt: 'asc' }] as const;
 
-    async function findTodo(id: string): Promise<Todo> {
-        const [row] = await db.select().from(todos).where(eq(todos.id, id));
+    /** The period starting `start`, plus anything left unfinished from earlier ones. */
+    function openOrIn<F extends 'date' | 'month'>(field: F, start: string) {
+        const day = fromDay(start);
+        return {
+            OR: [
+                { [field]: day } as Record<F, Date>,
+                { [field]: { lt: day }, completedAt: null } as Record<F, { lt: Date }> & {
+                    completedAt: null;
+                },
+            ],
+        };
+    }
+
+    async function findTodo(id: string): Promise<Row<'todo'>> {
+        const row = await db.todo.findUnique({ where: { id } });
         if (!row) throw notFound('Todo');
         return row;
     }
 
-    async function findGoal(id: string): Promise<Goal> {
-        const [row] = await db.select().from(goals).where(eq(goals.id, id));
+    async function findGoal(id: string): Promise<Row<'goal'>> {
+        const row = await db.goal.findUnique({ where: { id } });
         if (!row) throw notFound('Goal');
         return row;
-    }
-
-    function openOrIn(column: typeof todos.date | typeof goals.month, start: string, done: SQL) {
-        return or(eq(column, start), and(lt(column, start), done));
     }
 
     return {
@@ -71,36 +75,19 @@ export function createTodosService(db: Db, now: () => Date) {
             const week = weekStart(today);
             const month = monthStart(today);
             const [day, tomorrow, weekly, monthly] = await Promise.all([
-                db
-                    .select()
-                    .from(todos)
-                    .where(
-                        and(
-                            eq(todos.scope, 'day'),
-                            openOrIn(todos.date, today, isNull(todos.completedAt)),
-                        ),
-                    )
-                    .orderBy(...order),
-                db
-                    .select()
-                    .from(todos)
-                    .where(and(eq(todos.scope, 'day'), eq(todos.date, addDays(today, 1))))
-                    .orderBy(...order),
-                db
-                    .select()
-                    .from(todos)
-                    .where(
-                        and(
-                            eq(todos.scope, 'week'),
-                            openOrIn(todos.date, week, isNull(todos.completedAt)),
-                        ),
-                    )
-                    .orderBy(...order),
-                db
-                    .select()
-                    .from(goals)
-                    .where(openOrIn(goals.month, month, isNull(goals.completedAt)))
-                    .orderBy(asc(goals.position), asc(goals.createdAt)),
+                db.todo.findMany({
+                    where: { scope: 'day', ...openOrIn('date', today) },
+                    orderBy: [...order],
+                }),
+                db.todo.findMany({
+                    where: { scope: 'day', date: fromDay(addDays(today, 1)) },
+                    orderBy: [...order],
+                }),
+                db.todo.findMany({
+                    where: { scope: 'week', ...openOrIn('date', week) },
+                    orderBy: [...order],
+                }),
+                db.goal.findMany({ where: openOrIn('month', month), orderBy: [...order] }),
             ]);
             return {
                 today,
@@ -113,110 +100,111 @@ export function createTodosService(db: Db, now: () => Date) {
             };
         },
 
+        /** Day todos dated in the range, and week todos for every week that overlaps it. */
         listTodos(filter: { from: string; to: string; scope?: TodoScope | undefined }) {
-            return db
-                .select()
-                .from(todos)
-                .where(
-                    and(
-                        gte(
-                            todos.date,
-                            filter.scope === 'week' ? weekStart(filter.from) : filter.from,
-                        ),
-                        lte(todos.date, filter.to),
-                        filter.scope ? eq(todos.scope, filter.scope) : undefined,
-                    ),
-                )
-                .orderBy(asc(todos.date), ...order);
+            const to = fromDay(filter.to);
+            const day = { scope: 'day', date: { gte: fromDay(filter.from), lte: to } };
+            // A week todo is dated by its Sunday, which falls before `from` in a mid-week range.
+            const week = { scope: 'week', date: { gte: fromDay(weekStart(filter.from)), lte: to } };
+            return db.todo.findMany({
+                where:
+                    filter.scope === 'day'
+                        ? day
+                        : filter.scope === 'week'
+                          ? week
+                          : { OR: [day, week] },
+                orderBy: [{ date: 'asc' }, ...order],
+            });
         },
 
         async createTodo(input: TodoInput) {
             if (input.goalId) await findGoal(input.goalId);
-            const [row] = await db
-                .insert(todos)
-                .values({
+            const at = now();
+            return db.todo.create({
+                data: {
                     title: input.title,
                     notes: input.notes ?? null,
                     scope: input.scope,
                     date: normalizeDate(input.scope, input.date),
                     goalId: input.goalId ?? null,
-                    position: input.position ?? Date.now(),
-                })
-                .returning();
-            return row!;
+                    position: input.position ?? at.getTime(),
+                    createdAt: at,
+                    updatedAt: at,
+                },
+            });
         },
 
         async updateTodo(id: string, patch: TodoPatch) {
             const current = await findTodo(id);
             if (patch.goalId) await findGoal(patch.goalId);
             const scope = patch.scope ?? current.scope;
-            const [row] = await db
-                .update(todos)
-                .set({
+            const at = now();
+            return db.todo.update({
+                where: { id },
+                data: {
                     ...(patch.title === undefined ? {} : { title: patch.title }),
                     ...(patch.notes === undefined ? {} : { notes: patch.notes }),
                     ...(patch.goalId === undefined ? {} : { goalId: patch.goalId }),
                     ...(patch.position === undefined ? {} : { position: patch.position }),
                     scope,
                     date: normalizeDate(scope, patch.date ?? current.date),
-                    ...completion(patch.completed, now()),
-                    updatedAt: now(),
-                })
-                .where(eq(todos.id, id))
-                .returning();
-            return row!;
+                    ...completion(patch.completed, at),
+                    updatedAt: at,
+                },
+            });
         },
 
         async deleteTodo(id: string) {
-            const [row] = await db.delete(todos).where(eq(todos.id, id)).returning();
-            if (!row) throw notFound('Todo');
-            return row;
+            await findTodo(id);
+            return db.todo.delete({ where: { id } });
         },
 
         listGoals(filter: { from: string; to: string }) {
-            return db
-                .select()
-                .from(goals)
-                .where(and(gte(goals.month, monthStart(filter.from)), lte(goals.month, filter.to)))
-                .orderBy(asc(goals.month), asc(goals.position), asc(goals.createdAt));
+            return db.goal.findMany({
+                where: {
+                    month: { gte: fromDay(monthStart(filter.from)), lte: fromDay(filter.to) },
+                },
+                orderBy: [{ month: 'asc' }, ...order],
+            });
         },
 
-        async createGoal(input: GoalInput) {
-            const [row] = await db
-                .insert(goals)
-                .values({
+        createGoal(input: GoalInput) {
+            const at = now();
+            return db.goal.create({
+                data: {
                     title: input.title,
                     notes: input.notes ?? null,
-                    month: monthStart(input.month),
-                    position: input.position ?? Date.now(),
+                    month: fromDay(monthStart(input.month)),
+                    position: input.position ?? at.getTime(),
                     ...(input.color ? { color: input.color } : {}),
-                })
-                .returning();
-            return row!;
+                    createdAt: at,
+                    updatedAt: at,
+                },
+            });
         },
 
         async updateGoal(id: string, patch: GoalPatch) {
             await findGoal(id);
-            const [row] = await db
-                .update(goals)
-                .set({
+            const at = now();
+            return db.goal.update({
+                where: { id },
+                data: {
                     ...(patch.title === undefined ? {} : { title: patch.title }),
                     ...(patch.notes === undefined ? {} : { notes: patch.notes }),
-                    ...(patch.month === undefined ? {} : { month: monthStart(patch.month) }),
+                    ...(patch.month === undefined
+                        ? {}
+                        : { month: fromDay(monthStart(patch.month)) }),
                     ...(patch.color === undefined ? {} : { color: patch.color }),
                     ...(patch.position === undefined ? {} : { position: patch.position }),
-                    ...completion(patch.completed, now()),
-                    updatedAt: now(),
-                })
-                .where(eq(goals.id, id))
-                .returning();
-            return row!;
+                    ...completion(patch.completed, at),
+                    updatedAt: at,
+                },
+            });
         },
 
         async deleteGoal(id: string) {
-            const [row] = await db.delete(goals).where(eq(goals.id, id)).returning();
-            if (!row) throw notFound('Goal');
-            return row;
+            await findGoal(id);
+            return db.goal.delete({ where: { id } });
         },
     };
 }

@@ -1,3 +1,4 @@
+import { trimTrailingSlashes } from '@lyfestyle/shared';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 
@@ -16,6 +17,8 @@ export interface RunnerEnv {
     cwd: string;
     maxTurns: number;
     maxBudgetUsd: number | undefined;
+    /** Longest one run may take, in ms. */
+    runTimeoutMs: number;
 }
 
 /** A comma list, `none` for an empty list, or undefined to keep the default. */
@@ -29,10 +32,23 @@ const toolList = (value: string | undefined) =>
                 .map((t) => t.trim())
                 .filter(Boolean);
 
-const number = (value: string | undefined, fallback: number) => {
+/** A setting that must be a positive number (a whole one when `whole`), or `fallback` when unset. */
+function positive(
+    name: string,
+    value: string | undefined,
+    fallback: number,
+    { whole = false, hint = '' } = {},
+) {
+    if (value === undefined) return fallback;
     const parsed = Number(value);
-    return value && Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-};
+    if (!Number.isFinite(parsed) || parsed <= 0 || (whole && !Number.isInteger(parsed))) {
+        const kind = whole ? 'positive whole number' : 'positive number';
+        throw new Error(`${name} must be a ${kind}, not "${value}"${hint}`);
+    }
+    return parsed;
+}
+
+const whole = { whole: true };
 
 export function loadRunnerEnv(raw: Record<string, string | undefined> = process.env): RunnerEnv {
     // A bare `KEY=` line in .env arrives as an empty string; it means unset.
@@ -42,23 +58,28 @@ export function loadRunnerEnv(raw: Record<string, string | undefined> = process.
     const apiToken = env.LYFESTYLE_API_TOKEN ?? env.API_TOKEN;
     if (!apiToken)
         throw new Error('Set LYFESTYLE_API_TOKEN (or API_TOKEN) to the API bearer token');
+    const maxBudget = env.AGENT_MAX_BUDGET_USD;
     return {
-        apiUrl: (env.LYFESTYLE_API_URL ?? `http://localhost:${env.PORT ?? 3000}`).replace(
-            /\/+$/,
-            '',
+        apiUrl: trimTrailingSlashes(
+            env.LYFESTYLE_API_URL ?? `http://localhost:${env.PORT ?? 3000}`,
         ),
         apiToken,
         runnerId: env.RUNNER_ID ?? hostname(),
-        concurrency: number(env.RUNNER_CONCURRENCY, 1),
+        concurrency: positive('RUNNER_CONCURRENCY', env.RUNNER_CONCURRENCY, 1, whole),
         harness: env.AGENT_HARNESS ?? (env.AGENT_HARNESS_COMMAND ? 'command' : 'claude-code'),
         harnessCommand: env.AGENT_HARNESS_COMMAND,
         model: env.AGENT_MODEL,
         tools: toolList(env.AGENT_TOOLS),
         connectorTools: toolList(env.AGENT_CONNECTOR_TOOLS),
         cwd: env.AGENT_CWD ?? join(homedir(), '.lyfestyle', 'agent'),
-        maxTurns: number(env.AGENT_MAX_TURNS, 50),
-        maxBudgetUsd: env.AGENT_MAX_BUDGET_USD
-            ? number(env.AGENT_MAX_BUDGET_USD, 0) || undefined
-            : undefined,
+        maxTurns: positive('AGENT_MAX_TURNS', env.AGENT_MAX_TURNS, 50, whole),
+        // 0 is refused rather than read as "no cap": an empty line says that.
+        maxBudgetUsd:
+            maxBudget === undefined
+                ? undefined
+                : positive('AGENT_MAX_BUDGET_USD', maxBudget, 0, {
+                      hint: '; leave it empty for no cap of its own',
+                  }),
+        runTimeoutMs: positive('RUN_TIMEOUT_MINUTES', env.RUN_TIMEOUT_MINUTES, 30) * 60_000,
     };
 }

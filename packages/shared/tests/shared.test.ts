@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
     addDays,
     extractPageLinks,
+    INT4_MAX,
     isoDate,
     monthStart,
     pageLink,
+    runEventInput,
     weekStart,
 } from '../src/index.js';
 
@@ -37,5 +39,25 @@ describe('dates', () => {
     it('rejects impossible days', () => {
         expect(isoDate.safeParse('2026-02-30').success).toBe(false);
         expect(isoDate.safeParse('2026-02-28').success).toBe(true);
+    });
+});
+
+describe('runEventInput', () => {
+    it('caps token counts at what an int4 column holds instead of rejecting them', () => {
+        const parsed = runEventInput.parse({
+            type: 'usage',
+            model: 'm',
+            inputTokens: 5_000_000_000,
+            outputTokens: 1,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            costUsd: 0.5,
+            durationMs: 3_000_000_000,
+        });
+        expect(parsed).toMatchObject({
+            inputTokens: INT4_MAX,
+            outputTokens: 1,
+            durationMs: INT4_MAX,
+        });
     });
 });

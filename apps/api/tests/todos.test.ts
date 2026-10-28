@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestContext, type TestContext } from '../src/testing.js';
+import { createTodosService } from '../src/todos/service.js';
 
 let t: TestContext;
 beforeAll(async () => {
@@ -103,5 +104,65 @@ describe('planner', () => {
         });
         expect(res.status).toBe(404);
         expect((await t.call('GET', '/todos/board?today=2026-02-31')).status).toBe(400);
+    });
+
+    it('moves a week todo onto a day', async () => {
+        const todo = await t.call('POST', '/todos', {
+            title: 'Week to day',
+            scope: 'week',
+            date: '2026-12-09',
+        });
+        expect(todo.body.date).toBe('2026-12-06');
+        const moved = await t.call('PATCH', `/todos/${todo.body.id}`, {
+            scope: 'day',
+            date: '2026-12-09',
+        });
+        expect(moved.body).toMatchObject({ scope: 'day', date: '2026-12-09' });
+    });
+
+    it('unlinks a todo from its goal with goalId null', async () => {
+        const goal = await t.call('POST', '/goals', { title: 'Linked', month: '2026-12-01' });
+        const todo = await t.call('POST', '/todos', {
+            title: 'Linked todo',
+            scope: 'day',
+            date: '2026-12-02',
+            goalId: goal.body.id,
+        });
+        const unlinked = await t.call('PATCH', `/todos/${todo.body.id}`, { goalId: null });
+        expect(unlinked.status).toBe(200);
+        expect(unlinked.body.goalId).toBeNull();
+    });
+
+    it('lists the week todos of a range that starts mid-week', async () => {
+        const make = (title: string, scope: string, date: string) =>
+            t.call('POST', '/todos', { title, scope, date });
+        // 2027-03-10 is a Wednesday in the week of Sunday 2027-03-07.
+        await make('This week (filed Sunday)', 'week', '2027-03-10');
+        await make('Last week', 'week', '2027-03-03');
+        await make('Monday, before the range', 'day', '2027-03-08');
+        await make('Thursday', 'day', '2027-03-11');
+
+        const list = (scope = '') =>
+            t.call('GET', `/todos?from=2027-03-10&to=2027-03-12${scope}`).then((r) => r.body.items);
+        expect(titles(await list())).toEqual(['This week (filed Sunday)', 'Thursday']);
+        expect(titles(await list('&scope=week'))).toEqual(['This week (filed Sunday)']);
+        expect(titles(await list('&scope=day'))).toEqual(['Thursday']);
+    });
+
+    it('answers 404 for a todo or goal that does not exist', async () => {
+        for (const kind of ['todos', 'goals']) {
+            const id = crypto.randomUUID();
+            expect((await t.call('DELETE', `/${kind}/${id}`)).status).toBe(404);
+            expect((await t.call('PATCH', `/${kind}/${id}`, { title: 'x' })).status).toBe(404);
+        }
+    });
+
+    it('stamps new items with the injected clock', async () => {
+        const at = new Date('2026-12-24T18:00:00.000Z');
+        const todos = createTodosService(t.services.db, () => at);
+        const todo = await todos.createTodo({ title: 'Clocked', scope: 'day', date: '2026-12-24' });
+        expect(todo).toMatchObject({ createdAt: at, updatedAt: at, position: at.getTime() });
+        const goal = await todos.createGoal({ title: 'Clocked goal', month: '2026-12-01' });
+        expect(goal).toMatchObject({ createdAt: at, updatedAt: at, position: at.getTime() });
     });
 });

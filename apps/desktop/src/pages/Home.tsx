@@ -1,33 +1,29 @@
+import type { CSSProperties } from 'react';
 import Composer from '../components/Composer';
-import { useApp } from '../store/app';
 import { useData } from '../store/data';
-import { sendMessage } from '../lib/agent';
-import { greeting, titleFrom } from '../lib/util';
+import { startConversation } from '../lib/actions';
+import { todayLabel } from '../lib/time';
+import { isWeb } from '../lib/tauri';
+import { greeting } from '../lib/util';
 
 export default function Home() {
     const name = useData((s) => s.settings.name);
-    const createConversation = useData((s) => s.createConversation);
-    const navigate = useApp((s) => s.navigate);
-    const text = greeting('');
-    const who = name.trim();
-
-    const start = async (prompt: string) => {
-        const c = await createConversation(titleFrom(prompt));
-        navigate({ name: 'conversation', id: c.id });
-        void sendMessage(c.id, prompt);
-    };
+    const text = greeting(name) + '.';
+    const today = todayLabel();
 
     return (
         <div className="home">
-            <h1>
-                {text}
-                {who ? (
-                    <>
-                        , <em>{who}</em>
-                    </>
-                ) : null}
-            </h1>
-            <Composer autoFocus onSubmit={(t) => void start(t)} />
+            <div className="home-inner">
+                <p className="eyebrow home-date">{today}</p>
+                <h1>
+                    {/* The greeting types itself; the CSS steps once per character. */}
+                    <span className="typed" style={{ '--n': text.length } as CSSProperties}>
+                        {text}
+                    </span>
+                </h1>
+                {/* No agent on the web until one runs in the cloud. */}
+                {!isWeb && <Composer autoFocus onSubmit={(t) => void startConversation(t)} />}
+            </div>
         </div>
     );
 }

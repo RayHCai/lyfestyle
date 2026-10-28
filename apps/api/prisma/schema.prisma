@@ -1,0 +1,307 @@
+// Models map onto the snake_case tables first created by Drizzle (migration 0_init), so existing
+// databases keep their data. Text columns typed as unions (run kinds, statuses, scopes) and JSON
+// columns are narrowed to their TypeScript types in src/db/client.ts.
+//
+// Columns that order a keyset-paginated list are millisecond precision (`Timestamptz(3)`): cursors
+// carry a JS `Date`, and microsecond rows sharing the cursor's millisecond would otherwise be skipped.
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/db/generated"
+  runtime             = "nodejs"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Page {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title     String    @default("")
+  content   String    @default("")
+  icon      String?
+  version   Int       @default(1)
+  /// Every page write takes the next value of the `page_seq` sequence (inserts through the column
+  /// default, updates explicitly in pages/service.ts), so sync clients can pull "everything after N".
+  seq       BigInt    @unique(map: "pages_seq_idx") @default(autoincrement())
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @default(now()) @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  /// Generated from title and content; queried with raw SQL in pages/service.ts.
+  search    Unsupported("tsvector")? @default(dbgenerated("(setweight(to_tsvector('english'::regconfig, COALESCE(title, ''::text)), 'A'::\"char\") || setweight(to_tsvector('english'::regconfig, COALESCE(content, ''::text)), 'B'::\"char\"))"))
+  links     PageLink[]
+
+  @@index([search], map: "pages_search_idx", type: Gin)
+  @@index([updatedAt, id], map: "pages_updated_idx")
+  @@index([deletedAt], map: "pages_deleted_idx")
+  @@map("pages")
+}
+
+/// Targets carry no foreign key: a link may point at a page another device has not synced yet.
+model PageLink {
+  sourceId String @map("source_id") @db.Uuid
+  targetId String @map("target_id") @db.Uuid
+  source   Page   @relation(fields: [sourceId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "page_links_source_id_pages_id_fk")
+
+  @@id([sourceId, targetId], map: "page_links_source_id_target_id_pk")
+  @@index([targetId], map: "page_links_target_idx")
+  @@map("page_links")
+}
+
+model Goal {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title       String
+  notes       String?
+  month       DateTime  @db.Date
+  color       String    @default("#6366f1")
+  position    Float     @default(0)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  todos       Todo[]
+
+  @@index([month], map: "goals_month_idx")
+  @@map("goals")
+}
+
+model Todo {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title       String
+  notes       String?
+  scope       String
+  date        DateTime  @db.Date
+  goalId      String?   @map("goal_id") @db.Uuid
+  position    Float     @default(0)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  goal        Goal?     @relation(fields: [goalId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "todos_goal_id_goals_id_fk")
+
+  @@index([scope, date], map: "todos_scope_date_idx")
+  @@map("todos")
+}
+
+model Conversation {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title            String?
+  harness          String?
+  harnessSessionId String?   @map("harness_session_id")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @map("updated_at") @db.Timestamptz(3)
+  messages         Message[]
+  runs             Run[]
+
+  @@index([updatedAt, id], map: "conversations_updated_idx")
+  @@map("conversations")
+}
+
+/// A scheduled piece of code the API runs itself. Changes arrive as `AutomationDeploy`s, which only
+/// take effect once the user approves them.
+model Automation {
+  id          String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String
+  description String             @default("")
+  schedule    String
+  timezone    String             @default("UTC")
+  enabled     Boolean            @default(true)
+  /// The approved ES module; its default export receives the helper context.
+  code        String
+  version     Int                @default(1)
+  /// JSON the code keeps between runs through `ctx.state`.
+  state       Json               @default("{}")
+  nextRunAt   DateTime?          @map("next_run_at") @db.Timestamptz(6)
+  lastRunAt   DateTime?          @map("last_run_at") @db.Timestamptz(6)
+  createdAt   DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime           @default(now()) @map("updated_at") @db.Timestamptz(6)
+  deploys     AutomationDeploy[]
+  runs        AutomationRun[]
+
+  @@map("automations")
+}
+
+/// A proposed new automation (`automationId` null) or new version of one, waiting for approval.
+model AutomationDeploy {
+  id           String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  automationId String?     @map("automation_id") @db.Uuid
+  name         String
+  description  String      @default("")
+  schedule     String
+  timezone     String
+  code         String
+  status       String      @default("pending")
+  /// Who proposed it: an agent run's kind (`chat`, `automation`) or `user` for a direct tool call.
+  /// Kept on the row because the proposing run may be deleted with its conversation.
+  origin       String      @default("chat")
+  /// The agent run that proposed it, while that run still exists.
+  runId        String?     @map("run_id") @db.Uuid
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  decidedAt    DateTime?   @map("decided_at") @db.Timestamptz(6)
+  automation   Automation? @relation(fields: [automationId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  run          Run?        @relation(fields: [runId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([status, createdAt], map: "automation_deploys_status_idx")
+  @@map("automation_deploys")
+}
+
+/// One execution of an automation's code on the API. Agent runs it starts point back here.
+model AutomationRun {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  automationId String     @map("automation_id") @db.Uuid
+  version      Int
+  trigger      String
+  status       String     @default("running")
+  startedAt    DateTime   @default(now()) @map("started_at") @db.Timestamptz(6)
+  finishedAt   DateTime?  @map("finished_at") @db.Timestamptz(6)
+  error        String?
+  output       String?
+  logs         Json       @default("[]")
+  automation   Automation @relation(fields: [automationId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  agentRuns    Run[]
+
+  @@index([startedAt], map: "automation_runs_started_idx")
+  @@index([automationId, startedAt], map: "automation_runs_automation_idx")
+  @@map("automation_runs")
+}
+
+model Run {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kind            String
+  status          String        @default("queued")
+  prompt          String
+  conversationId  String?       @map("conversation_id") @db.Uuid
+  automationRunId String?       @map("automation_run_id") @db.Uuid
+  /// Usage beyond this many dollars cancels the run.
+  budgetUsd       Float         @default(5) @map("budget_usd")
+  runnerId        String?       @map("runner_id")
+  harness         String?
+  output          String?
+  error           String?
+  cancelRequested Boolean       @default(false) @map("cancel_requested")
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  startedAt       DateTime?     @map("started_at") @db.Timestamptz(6)
+  heartbeatAt     DateTime?     @map("heartbeat_at") @db.Timestamptz(6)
+  finishedAt      DateTime?     @map("finished_at") @db.Timestamptz(6)
+  conversation    Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "runs_conversation_id_conversations_id_fk")
+  automationRun   AutomationRun? @relation(fields: [automationRunId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  messages        Message[]
+  events          RunEvent[]
+  usage           UsageRecord[]
+  deploys         AutomationDeploy[]
+
+  @@index([status, createdAt], map: "runs_status_idx")
+  @@index([createdAt, id], map: "runs_created_idx")
+  @@index([automationRunId], map: "runs_automation_run_idx")
+  @@index([conversationId], map: "runs_conversation_idx")
+  @@map("runs")
+}
+
+model Message {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ordinal        BigInt       @default(autoincrement())
+  conversationId String       @map("conversation_id") @db.Uuid
+  runId          String?      @map("run_id") @db.Uuid
+  role           String
+  content        Json
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "messages_conversation_id_conversations_id_fk")
+  run            Run?         @relation(fields: [runId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "messages_run_id_runs_id_fk")
+
+  @@index([conversationId, ordinal], map: "messages_conversation_idx")
+  @@map("messages")
+}
+
+model RunEvent {
+  id        BigInt   @id @default(autoincrement())
+  runId     String   @map("run_id") @db.Uuid
+  type      String
+  data      Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  run       Run      @relation(fields: [runId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "run_events_run_id_runs_id_fk")
+
+  @@index([runId, id], map: "run_events_run_idx")
+  @@map("run_events")
+}
+
+/// Kind, conversation and automation are copied from the run so usage outlives the runs it came from.
+model UsageRecord {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId            String?  @map("run_id") @db.Uuid
+  kind             String
+  conversationId   String?  @map("conversation_id") @db.Uuid
+  automationId     String?  @map("automation_id") @db.Uuid
+  harness          String
+  sessionId        String?  @map("session_id")
+  model            String
+  inputTokens      Int      @map("input_tokens")
+  outputTokens     Int      @map("output_tokens")
+  cacheReadTokens  Int      @map("cache_read_tokens")
+  cacheWriteTokens Int      @map("cache_write_tokens")
+  costUsd          Float    @map("cost_usd")
+  durationMs       Int?     @map("duration_ms")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  run              Run?     @relation(fields: [runId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "usage_records_run_id_runs_id_fk")
+
+  @@index([createdAt], map: "usage_created_idx")
+  @@index([runId], map: "usage_run_idx")
+  @@index([sessionId], map: "usage_session_idx")
+  @@map("usage_records")
+}
+
+model Integration {
+  provider  String   @id
+  account   String?
+  config    Json     @default("{}")
+  secret    String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("integrations")
+}
+
+/// A page view reported by any website through the public collect endpoint.
+model PageView {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  origin    String
+  path      String
+  url       String
+  title     String?
+  referrer  String?
+  ip        String?
+  userAgent String?  @map("user_agent")
+  language  String?
+  props     Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([createdAt, id], map: "page_views_created_idx")
+  @@index([origin, createdAt], map: "page_views_origin_idx")
+  @@map("page_views")
+}
+
+model McpServer {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String   @unique(map: "mcp_servers_name_unique")
+  transport String
+  url       String?
+  command   String?
+  args      Json     @default("[]")
+  secret    String
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("mcp_servers")
+}
+
+/// A desktop notification from an automation or the agent; the app polls for ids after its last.
+model Notification {
+  id           BigInt   @id @default(autoincrement())
+  title        String
+  body         String?
+  source       String?
+  automationId String?  @map("automation_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("notifications")
+}
