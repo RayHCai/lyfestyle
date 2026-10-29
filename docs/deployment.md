@@ -42,8 +42,15 @@ git tag desktop-v0.2.0
 git push origin desktop-v0.2.0
 ```
 
-Review the draft release on GitHub, then publish it. Locally, `pnpm desktop:build` produces the
-same installer under `apps/desktop/src-tauri/target/release/bundle`.
+Review the draft release on GitHub, then publish it. Installed apps check
+`releases/latest/download/latest.json` on launch and offer to install a newer version, so an update
+reaches users only once its release is published (not draft, not prerelease).
+
+Updates are signed. The workflow reads the private key from the `TAURI_SIGNING_PRIVATE_KEY` and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` secrets; the public key is `plugins.updater.pubkey` in
+`tauri.conf.json`. Losing the private key means installed apps can never update again, so keep a
+backup. Locally, `pnpm desktop:build` needs `TAURI_SIGNING_PRIVATE_KEY` set (a path works) and
+produces the same installer under `apps/desktop/src-tauri/target/release/bundle`.
 
 ## Web app
 
