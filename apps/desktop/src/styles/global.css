@@ -264,14 +264,27 @@ kbd {
 .rail-btn:hover {
     background: var(--hover);
 }
-.wordmark {
-    font-weight: 700;
-    color: var(--ink);
-    letter-spacing: 0.02em;
+/* The wordmark (logo 19): outlined Gloock letters and a sakura cursor block, drawn as SVG.
+   The stroke stays 1px at any size; the drag region is the wrapper since SVG children eat it. */
+.wm {
+    display: inline-flex;
+    align-items: center;
 }
-.wordmark i {
-    font-style: normal;
-    color: var(--accent);
+.wordmark {
+    display: block;
+    height: 17px;
+    width: auto;
+    pointer-events: none;
+}
+.wm-letters {
+    fill: none;
+    stroke: var(--ink-strong);
+    stroke-width: 1px;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
+}
+.wm-cursor {
+    fill: var(--accent);
 }
 .tb-fill {
     flex: 1;
@@ -2092,8 +2105,10 @@ select {
     min-width: 5px;
     border-radius: 1px;
     background: var(--ink);
-    cursor: default;
     transition: transform 0.12s var(--ease);
+}
+.tl-mark.upcoming {
+    cursor: default;
 }
 .tl-mark:hover {
     transform: scaleY(1.4);
@@ -2218,6 +2233,139 @@ select {
     padding-left: 2ch;
     font-size: 12px;
 }
+.auto-row button.c.last:hover {
+    text-decoration: underline dashed;
+    text-underline-offset: 3px;
+}
+
+/* A run's log: picks of recent runs, the run's figures, the code's lines, then each agent run. */
+.rl-picks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5ch 1.5ch;
+    margin-bottom: 10px;
+    font-size: 12px;
+    color: var(--muted);
+}
+.rl-pick.on {
+    color: var(--ink);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+.rl-pick.failed {
+    color: var(--danger);
+}
+.rl-pick.running {
+    color: var(--accent);
+}
+.rl-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 2ch;
+    font-size: 12px;
+    color: var(--muted);
+}
+.rl-status {
+    color: var(--ink);
+}
+.rl-status.running,
+.rl-status.queued {
+    color: var(--accent);
+}
+.rl-status.failed {
+    color: var(--danger);
+}
+.rl-status.cancelled {
+    color: var(--faint);
+}
+.rl-h {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 2ch;
+    margin: 18px 0 6px;
+    padding-top: 10px;
+    border-top: var(--dash);
+    font: 500 11px/1.7 var(--mono);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--faint);
+}
+.rl-h span {
+    letter-spacing: 0;
+    text-transform: none;
+}
+.rl-none,
+.rl-prompt {
+    margin: 0 0 6px;
+    font-size: 12px;
+    color: var(--faint);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.rl-prompt {
+    color: var(--text2);
+    max-height: 7.5em;
+    overflow: auto;
+}
+.rl-lines {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: 12px;
+    line-height: 1.6;
+}
+.rl-lines li {
+    display: grid;
+    grid-template-columns: 6ch minmax(0, 1fr);
+    gap: 1.5ch;
+}
+.rl-lines time {
+    color: var(--ghost);
+}
+.rl-lines span {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.rl-lines .tool,
+.rl-lines .status,
+.rl-lines .usage,
+.rl-lines .debug {
+    color: var(--muted);
+}
+.rl-lines .result {
+    color: var(--faint);
+}
+.rl-lines .warn {
+    color: var(--ink-strong);
+    font-weight: 500;
+}
+.rl-lines .error {
+    color: var(--danger);
+}
+.rl-error,
+.rl-output pre {
+    margin: 8px 0 0;
+    font: inherit;
+    font-size: 12px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.rl-error {
+    color: var(--danger);
+}
+.rl-output {
+    margin-top: 8px;
+    font-size: 12px;
+}
+.rl-output summary {
+    cursor: pointer;
+    color: var(--muted);
+}
+.rl-output pre {
+    max-height: 24em;
+    overflow: auto;
+}
+
 @media (max-width: 900px) {
     .auto-row .c:not(.last) {
         display: none;

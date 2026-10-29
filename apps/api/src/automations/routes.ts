@@ -37,6 +37,7 @@ export const automationsRoutes = ({ automations }: Services) =>
                 return c.json(await automations.timeline(from, to));
             },
         )
+        .get('/runs/:id', byId, async (c) => c.json(await automations.run(c.req.valid('param').id)))
         .get('/:id', byId, async (c) => c.json(await automations.get(c.req.valid('param').id)))
         .patch('/:id', byId, validate('json', z.object({ enabled: z.boolean() })), async (c) =>
             c.json(

@@ -1,4 +1,4 @@
-import type { AutomationRunStatus, Db, Row } from '../db/client.js';
+import type { AutomationLog, AutomationRunStatus, Db, Row } from '../db/client.js';
 import { notFound } from '../lib/errors.js';
 import { slotsBetween } from './schedule.js';
 
@@ -17,18 +17,23 @@ interface LastRun {
 export function createQueries(deps: { db: Db; now: () => Date }) {
     const { db, now } = deps;
 
+    /** What each run reported spending, by run id. */
+    async function costByRun(runIds: string[]) {
+        const groups = await db.usageRecord.groupBy({
+            by: ['runId'],
+            where: { runId: { in: runIds } },
+            _sum: { costUsd: true },
+        });
+        return new Map(groups.map(({ runId, _sum: sum }) => [runId, sum.costUsd ?? 0]));
+    }
+
     async function withCost<T extends AutomationRun>(rows: T[]) {
         if (!rows.length) return [];
         const agentRuns = await db.run.findMany({
             where: { automationRunId: { in: rows.map((r) => r.id) } },
             select: { id: true, automationRunId: true },
         });
-        const groups = await db.usageRecord.groupBy({
-            by: ['runId'],
-            where: { runId: { in: agentRuns.map((r) => r.id) } },
-            _sum: { costUsd: true },
-        });
-        const byRun = new Map(groups.map(({ runId, _sum: sum }) => [runId, sum.costUsd ?? 0]));
+        const byRun = await costByRun(agentRuns.map((r) => r.id));
         const cost = new Map<string, number>();
         for (const r of agentRuns) {
             const parent = r.automationRunId!;
@@ -75,6 +80,44 @@ export function createQueries(deps: { db: Db; now: () => Date }) {
                 take: 20,
             });
             return { ...automation, recentRuns: await withCost(recent) };
+        },
+
+        /**
+         * One automation run with the agent runs it queued, oldest first. `liveLogs` gives the logs
+         * of a run still executing, which reach the row only when it ends.
+         */
+        async run(id: string, liveLogs: (runId: string) => AutomationLog[] | null) {
+            const row = await db.automationRun.findUnique({
+                where: { id },
+                include: { automation: { select: { name: true } } },
+            });
+            if (!row) throw notFound('Automation run');
+            const agentRuns = await db.run.findMany({
+                where: { automationRunId: id },
+                orderBy: { createdAt: 'asc' },
+                select: {
+                    id: true,
+                    status: true,
+                    prompt: true,
+                    budgetUsd: true,
+                    runnerId: true,
+                    harness: true,
+                    error: true,
+                    createdAt: true,
+                    startedAt: true,
+                    finishedAt: true,
+                },
+            });
+            const byRun = await costByRun(agentRuns.map((r) => r.id));
+            const { automation, ...run } = row;
+            const runs = agentRuns.map((r) => ({ ...r, costUsd: byRun.get(r.id) ?? 0 }));
+            return {
+                ...run,
+                name: automation.name,
+                logs: (run.status === 'running' && liveLogs(id)) || run.logs,
+                costUsd: runs.reduce((sum, r) => sum + r.costUsd, 0),
+                agentRuns: runs,
+            };
         },
 
         /** Runs that started in [from, to), and the scheduled slots still ahead in that window. */

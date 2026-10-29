@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Masthead from '../components/Masthead';
 import DeployCard from '../components/DeployCard';
 import Timeline from '../components/Timeline';
+import RunLog from '../components/RunLog';
 import { confirmAction } from '../components/Confirm';
 import { useAttempt, type Attempt } from '../hooks/useAttempt';
 import type { ApiAutomationRunSummary, ApiTimeline } from '../lib/api';
@@ -34,6 +35,8 @@ function Remote() {
     const [now, setNow] = useState(() => Date.now());
     const [timeline, setTimeline] = useState<ApiTimeline | null>(null);
     const [problem, attempt] = useAttempt();
+    /** The run whose log is open, if any. */
+    const [inspect, setInspect] = useState<{ automationId: string; runId: string } | null>(null);
     /** Numbers each load; a response that a newer load overtook (paging days quickly) is dropped. */
     const loads = useRef(0);
 
@@ -120,8 +123,24 @@ function Remote() {
                             )}
                         </div>
                     </div>
-                    <Timeline day={day} now={now} automations={automations} data={timeline} />
+                    <Timeline
+                        day={day}
+                        now={now}
+                        automations={automations}
+                        data={timeline}
+                        onOpen={(automationId, runId) => setInspect({ automationId, runId })}
+                    />
                 </section>
+
+                {inspect && (
+                    <RunLog
+                        key={inspect.runId}
+                        automationId={inspect.automationId}
+                        runId={inspect.runId}
+                        onPick={(runId) => setInspect({ ...inspect, runId })}
+                        onClose={() => setInspect(null)}
+                    />
+                )}
 
                 <section className="auto-sec">
                     <h2 className="sec-h">deployed</h2>
@@ -130,7 +149,13 @@ function Remote() {
                     )}
                     <div className="rows">
                         {automations.map((a) => (
-                            <AutomationRow key={a.id} id={a.id} attempt={attempt} reload={load} />
+                            <AutomationRow
+                                key={a.id}
+                                id={a.id}
+                                attempt={attempt}
+                                reload={load}
+                                onOpen={(runId) => setInspect({ automationId: a.id, runId })}
+                            />
                         ))}
                     </div>
                 </section>
@@ -151,10 +176,13 @@ function AutomationRow({
     id,
     attempt,
     reload,
+    onOpen,
 }: {
     id: string;
     attempt: Attempt;
     reload: () => Promise<void>;
+    /** Opens a run's log. */
+    onOpen: (runId: string) => void;
 }) {
     const a = useData((s) => s.automations.find((x) => x.id === id));
     const setEnabled = useData((s) => s.setAutomationEnabled);
@@ -187,16 +215,35 @@ function AutomationRow({
                     {describeCron(a.schedule)}
                 </span>
                 <span className="c next">{next}</span>
-                <span className={'c last ' + (last?.status ?? '')}>{lastRunLabel(last)}</span>
+                {last ? (
+                    <button
+                        className={'c last ' + last.status}
+                        title="Show this run's log"
+                        onClick={() => onOpen(last.id)}
+                    >
+                        {lastRunLabel(last)}
+                    </button>
+                ) : (
+                    <span className="c last">{lastRunLabel(last)}</span>
+                )}
             </div>
             <span className="acts">
                 <button
                     className="btn"
                     disabled={last?.status === 'running'}
-                    onClick={() => void attempt(() => trigger(a.id)).then(reload)}
+                    onClick={() =>
+                        void attempt(async () => {
+                            onOpen((await trigger(a.id)).id);
+                        }).then(reload)
+                    }
                 >
                     run now
                 </button>
+                {last && (
+                    <button className="btn" onClick={() => onOpen(last.id)}>
+                        logs
+                    </button>
+                )}
                 <button className="btn danger" onClick={() => void del()}>
                     delete
                 </button>

@@ -32,6 +32,7 @@ export function createAutomationsService(deps: ExecutorDeps) {
         list: queries.list,
         get: queries.get,
         timeline: queries.timeline,
+        run: (id: string) => queries.run(id, executor.liveLogs),
 
         propose: deploys.propose,
         deploys: deploys.list,

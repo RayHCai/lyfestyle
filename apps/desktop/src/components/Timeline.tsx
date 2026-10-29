@@ -39,8 +39,10 @@ export default function Timeline(props: {
     now: number;
     automations: ApiAutomation[];
     data: ApiTimeline | null;
+    /** Opens a run's log when its mark is clicked. */
+    onOpen: (automationId: string, runId: string) => void;
 }) {
-    const { day, now, automations, data } = props;
+    const { day, now, automations, data, onOpen } = props;
     const box = useRef<HTMLDivElement>(null);
     const [hover, setHover] = useState<Hover | null>(null);
     const pct = (t: number) => `${(Math.min(Math.max(t - day, 0), DAY_MS) / DAY_MS) * 100}%`;
@@ -98,12 +100,14 @@ export default function Timeline(props: {
                             const start = Date.parse(r.startedAt);
                             const end = r.finishedAt ? Date.parse(r.finishedAt) : now;
                             return (
-                                <span
+                                <button
                                     key={r.id}
                                     className={'tl-mark ' + r.status}
+                                    aria-label={`${r.name} at ${clock(start)}: ${r.status}. Show its log`}
                                     style={place({ '--at': pct(start), '--w': width(start, end) })}
                                     onMouseEnter={(e) => point(e, { run: r })}
                                     onMouseMove={(e) => point(e, { run: r })}
+                                    onClick={() => onOpen(r.automationId, r.id)}
                                 />
                             );
                         })}

@@ -37,7 +37,7 @@ export function createExecutor(deps: ExecutorDeps) {
     /** Executions in this process, by automation id. The API is a single replica (ADR 0003). */
     const active = new Map<
         string,
-        { runId: string; abort: AbortController; done: Promise<void> }
+        { runId: string; abort: AbortController; done: Promise<void>; logs: AutomationLog[] }
     >();
 
     async function notifyFailure(automation: Automation, error: string) {
@@ -121,8 +121,12 @@ export function createExecutor(deps: ExecutorDeps) {
         return plain(await helper.run(parsed.data, x, deps));
     }
 
-    async function execute(automation: Automation, run: AutomationRun, abort: AbortController) {
-        const logs: AutomationLog[] = [];
+    async function execute(
+        automation: Automation,
+        run: AutomationRun,
+        abort: AbortController,
+        logs: AutomationLog[],
+    ) {
         let over = false;
         const log = (level: AutomationLog['level'], text: string) => {
             if (over) return;
@@ -224,7 +228,9 @@ export function createExecutor(deps: ExecutorDeps) {
             const abort = new AbortController();
             let release = () => {};
             const done = new Promise<void>((resolve) => (release = resolve));
-            active.set(automation.id, { runId, abort, done });
+            // Shared with execute(), so the logs of a run still going can be read before it ends.
+            const logs: AutomationLog[] = [];
+            active.set(automation.id, { runId, abort, done, logs });
             try {
                 // One transaction, so a failure cannot leave a `running` row nothing will finish.
                 const run = await db.$transaction(async (tx) => {
@@ -243,7 +249,7 @@ export function createExecutor(deps: ExecutorDeps) {
                     });
                     return created;
                 });
-                void execute(automation, run, abort)
+                void execute(automation, run, abort, logs)
                     .catch((err: unknown) => console.error(`Automation run ${run.id} broke`, err))
                     .finally(() => {
                         active.delete(automation.id);
@@ -278,6 +284,12 @@ export function createExecutor(deps: ExecutorDeps) {
 
         /** The automation runs executing in this process. */
         runIds: () => [...active.values()].map((a) => a.runId),
+
+        /** What a run executing here has logged so far; null once it is not executing here. */
+        liveLogs(runId: string): AutomationLog[] | null {
+            for (const a of active.values()) if (a.runId === runId) return [...a.logs];
+            return null;
+        },
 
         /** Stops an automation's execution, if any, and waits for it to be recorded as cancelled. */
         async stop(automationId: string, reason: string) {

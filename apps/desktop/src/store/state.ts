@@ -1,7 +1,7 @@
 /** The shape of `useData`, one interface per domain module, so the modules can share it without
  *  importing each other. */
 import type { StateCreator } from 'zustand';
-import type { ApiAutomation, ApiAutomationDeploy } from '../lib/api';
+import type { ApiAutomation, ApiAutomationDeploy, ApiAutomationRun } from '../lib/api';
 import type { AgentEnv, Conversation, DocMeta, Settings, Skill, TrashedDoc } from '../lib/types';
 
 export type Mode = 'local' | 'api';
@@ -88,7 +88,7 @@ export interface AutomationsSlice {
     setAutomationEnabled: (id: string, enabled: boolean) => Promise<void>;
     deleteAutomation: (id: string) => Promise<void>;
     /** Start a run of the automation now. */
-    triggerAutomation: (id: string) => Promise<void>;
+    triggerAutomation: (id: string) => Promise<ApiAutomationRun>;
     /** Approve deploys the code; reject drops it. Either way the list reloads. */
     decideDeploy: (id: string, approve: boolean) => Promise<void>;
 }

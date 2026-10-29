@@ -358,6 +358,46 @@ describe('agent runs', slow, () => {
         await t.call('DELETE', `/automations/${automation.id}`);
     });
 
+    it('shows a run in progress: its logs so far and its agent runs', async () => {
+        const automation = await deploy(`
+            export default async (ctx) => {
+                ctx.log('Looking for new mail');
+                return ctx.agent('Summarise it');
+            };
+        `);
+        const { runId, agentRunId } = await startWaitingOnAgent(automation.id);
+        // A chat-only runner (the desktop app) leaves it for a runner that takes automations.
+        const chat = await t.call('POST', '/runs/claim', { ...runner, kinds: ['chat'] });
+        expect(chat.status).toBe(204);
+        const claimed = await t.call('POST', '/runs/claim', { ...runner, kinds: ['automation'] });
+        expect(claimed.body.run.id).toBe(agentRunId);
+        await t.call('POST', `/runs/${agentRunId}/events`, { events: [usage] });
+
+        const live = (await t.call('GET', `/automations/runs/${runId}`)).body;
+        expect(live).toMatchObject({ status: 'running', name: 'Test', costUsd: 1.5 });
+        expect(live.logs.map((l: { message: string }) => l.message)).toEqual([
+            'Looking for new mail',
+            `Started agent run ${agentRunId}`,
+        ]);
+        expect(live.agentRuns).toEqual([
+            expect.objectContaining({
+                id: agentRunId,
+                status: 'running',
+                prompt: 'Summarise it',
+                runnerId: 'laptop',
+                costUsd: 1.5,
+            }),
+        ]);
+
+        await t.call('POST', `/runs/${agentRunId}/complete`, { status: 'succeeded', output: 'ok' });
+        await t.services.automations.idle();
+        const done = (await t.call('GET', `/automations/runs/${runId}`)).body;
+        expect(done).toMatchObject({ status: 'succeeded', output: 'ok' });
+        expect(done.logs).toHaveLength(2);
+        expect((await t.call('GET', `/automations/runs/${agentRunId}`)).status).toBe(404);
+        await t.call('DELETE', `/automations/${automation.id}`);
+    });
+
     it('splits the budget between calls made in parallel', async () => {
         const automation = await deploy(`
             export default async (ctx) => {

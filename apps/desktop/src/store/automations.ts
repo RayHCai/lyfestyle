@@ -35,13 +35,14 @@ export const automationsSlice: Slice<AutomationsSlice> = (set, get) => ({
 
     async triggerAutomation(id) {
         const api = getApi();
-        if (!api) return;
+        if (!api) throw new Error('Not connected to the server');
         const run = await api.triggerAutomation(id);
         set((s) => ({
             automations: s.automations.map((a) =>
                 a.id === id ? { ...a, lastRunAt: run.startedAt, lastRun: run } : a,
             ),
         }));
+        return run;
     },
 
     async decideDeploy(id, approve) {
