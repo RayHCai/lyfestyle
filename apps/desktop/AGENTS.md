@@ -49,8 +49,11 @@ Verify UI changes with `typecheck`, `test`, `lint:rust`, `test:rust` and screens
   Automations is API-only and read-only by design: the agent proposes code over the API's MCP
   tools, and the page lists pending deploys (with a line diff against the deployed version) to
   approve or reject, a 24 h timeline (`components/Timeline.tsx`, one lane per automation, runs
-  and upcoming slots, hover tooltip) and the deployed list (switch, run now, delete). There is
-  no create or edit form; do not add one. Local mode shows only a note. The same deploy card
+  and upcoming slots, hover tooltip) and the deployed list (switch, run now, logs, delete).
+  Clicking a run's mark, its last-run status or `logs` opens `components/RunLog.tsx`: the run from
+  `GET /automations/runs/:id` (code logs live while it runs) and each agent run's events from
+  `GET /runs/:id/events` (lines from `lib/run-log.ts`), polled every 2 s until all have ended.
+  There is no create or edit form; do not add one. Local mode shows only a note. The same deploy card
   (`components/DeployCard.tsx`) is the approval prompt in a conversation: `lib/remote.ts` pairs
   each `automations_deploy` tool call with its result, sets the deploy id on the message
   (`Message.deploys`), and `Conversation.tsx` renders a `DeployPrompt` for it. A decided deploy
@@ -82,7 +85,7 @@ Verify UI changes with `typecheck`, `test`, `lint:rust`, `test:rust` and screens
   `codex exec --json` events into Claude Code stream-json lines so one parser serves both.
 - `src/lib/runner.ts` API mode's in-app runner, started by `App.tsx` and off under
   `LYFESTYLE_AGENT_COMMAND` (the bridge would queue runs for itself): long-polls `/runs/claim` as
-  runner `desktop`, runs each claim through `agent_send` keyed by run id (the run's MCP servers from
+  runner `desktop` for `chat` runs only (automation runs go to the runner on Railway, ADR 0009), runs each claim through `agent_send` keyed by run id (the run's MCP servers from
   `/agent/config` with its agent token replace the local tool server; Claude Code gets the run's
   `--max-budget-usd`), maps lines to run events (`toRunEvents`), heartbeats and completes. Sessions
   are recorded as `desktop-<harness>` so only the same harness resumes them. `agent.ts` hands it
@@ -213,12 +216,16 @@ Verify UI changes with `typecheck`, `test`, `lint:rust`, `test:rust` and screens
   current item, the prompt glyph, the live dot and the cursor. Never a fill, never a button.
   Green `--ok` and red `--danger` are the only other colours, for the mode dot and errors.
 - One typeface: `--mono` (Geist Mono, 400/500/700, self-hosted through `@fontsource/geist-mono`
-  imports in `src/main.tsx`). Body is 14px/1.7; the greeting 30px, titles 20-26px bold, labels
+  imports in `src/main.tsx`). The one exception is the logo: `components/Wordmark.tsx` draws
+  lowercase Gloock as an outline (paths, not a font, so nothing else may use Gloock) ending in a
+  sakura cursor block. The app icons come from `src-tauri/icons/source.svg` (outlined `ly` plus the
+  block) via `pnpm exec tauri icon src-tauri/icons/source.svg -o src-tauri/icons`; the web favicon
+  is `public/favicon.svg`. Body is 14px/1.7; the greeting 30px, titles 20-26px bold, labels
   `.eyebrow` 11px uppercase with 0.12em tracking. Section names, mode text and hints are lowercase.
   Text does the work of chrome: buttons are words in brackets (`.btn`, `.send` draw `[ ]` with
   pseudo-elements), the switch reads `[ on ]`/`[ off ]`, tool calls are `{braces}`, tags too,
   markdown headings keep their `#`, lists their `-`, document titles get a `#` (`.hash`).
-- Chrome is drawn as text and rules, never boxes: the titlebar is a status line (wordmark, dashed
+- Chrome is drawn as text and rules, never boxes: the titlebar is a status line (the outlined wordmark, dashed
   `.tb-fill`s, the current crumb, a clock), the sidebar a listing where `.mark` (`>`) points at the
   active item and counts sit at the right, the tab strip (`.tabs`) a row of `>` labels with a solid
   2px underline on the active one and a `×` on hover. No icons except the rail toggle, window

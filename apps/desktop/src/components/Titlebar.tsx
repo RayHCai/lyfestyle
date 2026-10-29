@@ -4,6 +4,7 @@ import { isTauri, windowAction } from '../lib/tauri';
 import { clock } from '../lib/time';
 import { useViewLabel } from '../lib/views';
 import { icons } from './icons';
+import { Wordmark } from './Wordmark';
 
 /** How close (px) the pointer must come to the rail button to open the sidebar. */
 const NEAR = 40;
@@ -65,8 +66,8 @@ export default function Titlebar() {
                 >
                     {icons.rail}
                 </button>
-                <span className="wordmark" data-tauri-drag-region>
-                    lyfestyle<i>.</i>
+                <span className="wm" data-tauri-drag-region>
+                    <Wordmark />
                 </span>
             </div>
             <span className="tb-fill" data-tauri-drag-region />
