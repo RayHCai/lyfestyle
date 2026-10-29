@@ -2,13 +2,13 @@
 
 The diagram is in the [README](../README.md). This page explains the moving parts.
 
-| Path              | What it is                                                                                                                  |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `apps/api`        | Hono + Prisma API on Postgres, deployed to Railway. Tests run it on in-memory PGlite.                                       |
-| `apps/runner`     | Local agent worker: claims runs from the API and executes them with Claude Code (or any harness).                           |
-| `apps/desktop`    | Tauri 2 + React desktop app. Talks to the API, or works offline on flat files with local Claude.                            |
-| `packages/client` | Typed API client for Node clients (the runner) and run event streaming.                                                     |
-| `packages/shared` | Run-event protocol and its SSE reader, page-link parsing, calendar-date helpers. Shared by API, runner, client and desktop. |
+| Path              | What it is                                                                                                                         |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/api`        | Hono + Prisma API on Postgres, deployed to Railway. Tests run it on in-memory PGlite.                                              |
+| `apps/runner`     | Agent worker: claims runs from the API and executes them with Claude Code (or any harness). Local, and on Railway for automations. |
+| `apps/desktop`    | Tauri 2 + React desktop app. Talks to the API, or works offline on flat files with local Claude.                                   |
+| `packages/client` | Typed API client for Node clients (the runner) and run event streaming.                                                            |
+| `packages/shared` | Run-event protocol and its SSE reader, page-link parsing, calendar-date helpers. Shared by API, runner, client and desktop.        |
 
 ## Core concepts
 
@@ -35,8 +35,11 @@ The diagram is in the [README](../README.md). This page explains the moving part
 
 ## The runner and agent harnesses
 
-The runner executes on your machine, so Claude Code uses your local login and the agent's built-in
-tools stay local ([ADR 0002](adr/0002-local-runner.md)). For each run it gives Claude Code:
+Chat turns run on your machine, so Claude Code uses your local login and the agent's built-in tools
+stay local ([ADR 0002](adr/0002-local-runner.md)). Automation runs go to a second runner on Railway
+with `RUNNER_KINDS=automation`, billed to an `ANTHROPIC_API_KEY` and without claude.ai connectors
+([ADR 0009](adr/0009-cloud-runner-for-automations.md)); `POST /runs/claim` takes `kinds` so each
+runner takes only its share. For each run a runner gives Claude Code:
 
 - the API's MCP server plus every enabled registered server, and nothing from your own Claude Code
   config (`settingSources: []`)

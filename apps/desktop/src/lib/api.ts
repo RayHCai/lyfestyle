@@ -130,6 +130,33 @@ export interface ApiAutomationRun extends ApiAutomationRunSummary {
     output: string | null;
     costUsd: number;
 }
+/** A line automation code logged (`ctx.log`, `console.*`, its stdout/stderr). */
+export interface ApiAutomationLog {
+    at: string;
+    level: 'info' | 'warn' | 'error';
+    message: string;
+}
+/** An agent run an automation run queued with `ctx.agent`. */
+export interface ApiAutomationAgentRun {
+    id: string;
+    status: RunStatus;
+    prompt: string;
+    budgetUsd: number;
+    costUsd: number;
+    /** The runner that claimed it, e.g. the cloud runner's RUNNER_ID; null while queued. */
+    runnerId: string | null;
+    harness: string | null;
+    error: string | null;
+    createdAt: string;
+    startedAt: string | null;
+    finishedAt: string | null;
+}
+/** `GET /automations/runs/:id`: `logs` are live while the run is going. */
+export interface ApiAutomationRunDetail extends ApiAutomationRun {
+    name: string;
+    logs: ApiAutomationLog[];
+    agentRuns: ApiAutomationAgentRun[];
+}
 /** Code proposed for approval. Nothing runs until the user approves it. */
 export interface ApiAutomationDeploy {
     id: string;
@@ -349,6 +376,13 @@ export class Api {
     async listAutomations() {
         return (await this.req<{ items: ApiAutomation[] }>('GET', '/automations')).items;
     }
+    /** With its code and its 20 most recent runs, newest first. */
+    getAutomation(id: string) {
+        return this.req<ApiAutomation & { code: string; recentRuns: ApiAutomationRun[] }>(
+            'GET',
+            `/automations/${id}`,
+        );
+    }
     setAutomationEnabled(id: string, enabled: boolean) {
         return this.req<ApiAutomation>('PATCH', `/automations/${id}`, { enabled });
     }
@@ -374,6 +408,19 @@ export class Api {
     }
     rejectDeploy(id: string) {
         return this.req<ApiAutomationDeploy>('POST', `/automations/deploys/${id}/reject`);
+    }
+    /** One automation run with its logs so far and the agent runs it queued. */
+    automationRun(id: string) {
+        return this.req<ApiAutomationRunDetail>('GET', `/automations/runs/${id}`);
+    }
+    /** A run's events after event id `after`, oldest first, up to 500. */
+    async runEvents(runId: string, after: number) {
+        return (
+            await this.req<{ items: RunEvent[] }>(
+                'GET',
+                `/runs/${runId}/events?after=${after}&limit=500`,
+            )
+        ).items;
     }
     /** Runs that started in [from, to) and the scheduled slots still ahead in it. */
     timeline(from: Date, to: Date) {
@@ -404,13 +451,15 @@ export class Api {
         return this.req<ApiViewSummary>('GET', `/metrics/views/summary?${q}`);
     }
 
-    /** Runner protocol: waits up to `waitMs` for a queued run; null when none came. */
-    async claimRun(runnerId: string, harness: string, waitMs: number) {
+    /** Runner protocol: waits up to `waitMs` for a queued run of one of `kinds`; null when none
+     *  came. */
+    async claimRun(runnerId: string, harness: string, waitMs: number, kinds: RunKind[]) {
         return (
             (await this.req<ApiClaim | undefined>('POST', '/runs/claim', {
                 runnerId,
                 harness,
                 waitMs,
+                kinds,
             })) ?? null
         );
     }

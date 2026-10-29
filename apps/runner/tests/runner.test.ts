@@ -189,6 +189,16 @@ describe('runner', () => {
         expect((await getRun(runId)).status).toBe('cancelled');
     });
 
+    it('leaves runs of kinds it does not take for another runner', async () => {
+        while (await runner.runOnce(0));
+        runner = makeRunner({ kinds: ['automation'] });
+        const { runId } = await send('for the desktop app');
+        expect(await runner.runOnce(0)).toBe(false);
+        expect((await getRun(runId)).status).toBe('queued');
+        expect(await makeRunner({ kinds: ['chat'] }).runOnce(0)).toBe(true);
+        expect((await getRun(runId)).status).toBe('succeeded');
+    });
+
     it('reports nothing claimed when the queue is empty', async () => {
         while (await runner.runOnce(0));
         expect(await runner.runOnce(0)).toBe(false);

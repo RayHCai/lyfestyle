@@ -1,4 +1,4 @@
-import { trimTrailingSlashes } from '@lyfestyle/shared';
+import { runKind, trimTrailingSlashes, type RunKind } from '@lyfestyle/shared';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 
@@ -7,6 +7,8 @@ export interface RunnerEnv {
     apiToken: string;
     runnerId: string;
     concurrency: number;
+    /** The run kinds this runner takes; undefined takes every kind. */
+    kinds: RunKind[] | undefined;
     /** `claude-code` (default) or `command`, which runs AGENT_HARNESS_COMMAND. */
     harness: string;
     harnessCommand: string | undefined;
@@ -50,6 +52,21 @@ function positive(
 
 const whole = { whole: true };
 
+/** RUNNER_KINDS: a comma list of run kinds, e.g. `automation` for a runner in the cloud. */
+function kindList(value: string | undefined): RunKind[] | undefined {
+    const kinds = toolList(value);
+    if (!kinds?.length) return undefined;
+    return kinds.map((kind) => {
+        const parsed = runKind.safeParse(kind);
+        if (!parsed.success) {
+            throw new Error(
+                `RUNNER_KINDS takes ${runKind.options.join(', ')}, comma-separated, not "${kind}"`,
+            );
+        }
+        return parsed.data;
+    });
+}
+
 export function loadRunnerEnv(raw: Record<string, string | undefined> = process.env): RunnerEnv {
     // A bare `KEY=` line in .env arrives as an empty string; it means unset.
     const env = Object.fromEntries(
@@ -66,6 +83,7 @@ export function loadRunnerEnv(raw: Record<string, string | undefined> = process.
         apiToken,
         runnerId: env.RUNNER_ID ?? hostname(),
         concurrency: positive('RUNNER_CONCURRENCY', env.RUNNER_CONCURRENCY, 1, whole),
+        kinds: kindList(env.RUNNER_KINDS),
         harness: env.AGENT_HARNESS ?? (env.AGENT_HARNESS_COMMAND ? 'command' : 'claude-code'),
         harnessCommand: env.AGENT_HARNESS_COMMAND,
         model: env.AGENT_MODEL,

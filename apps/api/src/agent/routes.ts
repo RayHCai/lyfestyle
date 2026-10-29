@@ -57,6 +57,8 @@ export const conversationsRoutes = ({ conversations }: Services) =>
 const claimBody = z.object({
     runnerId: z.string().min(1).max(200),
     harness: z.string().min(1).max(100),
+    /** Leave runs of other kinds to other runners, e.g. automations to a cloud runner. */
+    kinds: z.array(runKind).min(1).optional(),
     waitMs: z.number().int().min(0).max(30_000).default(0),
 });
 

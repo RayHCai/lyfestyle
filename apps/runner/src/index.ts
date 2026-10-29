@@ -43,6 +43,7 @@ const runner = new Runner({
     runnerId: env.runnerId,
     apiUrl: env.apiUrl,
     concurrency: env.concurrency,
+    kinds: env.kinds,
     runTimeoutMs: env.runTimeoutMs,
     soul: () => readSoul(),
     log: (message, data) =>
@@ -50,7 +51,8 @@ const runner = new Runner({
 });
 
 runner.start();
-console.log(`[runner] ${env.runnerId} taking runs from ${env.apiUrl} with ${harness.name}`);
+const kinds = env.kinds ? `${env.kinds.join(' and ')} runs` : 'runs';
+console.log(`[runner] ${env.runnerId} taking ${kinds} from ${env.apiUrl} with ${harness.name}`);
 
 const shutdown = async () => {
     console.log('[runner] Stopping; failing any run in flight');

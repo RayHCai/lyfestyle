@@ -24,6 +24,16 @@ describe('loadRunnerEnv', () => {
         });
     });
 
+    it('takes every run kind unless RUNNER_KINDS narrows it', () => {
+        expect(loadRunnerEnv({ API_TOKEN: 't', RUNNER_KINDS: '' }).kinds).toBeUndefined();
+        expect(loadRunnerEnv({ API_TOKEN: 't', RUNNER_KINDS: 'automation' }).kinds).toEqual([
+            'automation',
+        ]);
+        expect(() => loadRunnerEnv({ API_TOKEN: 't', RUNNER_KINDS: 'cron' })).toThrow(
+            /RUNNER_KINDS takes chat, automation/,
+        );
+    });
+
     it('turns built-in tools off with "none"', () => {
         expect(loadRunnerEnv({ API_TOKEN: 't', AGENT_TOOLS: 'none' }).tools).toEqual([]);
         expect(loadRunnerEnv({ API_TOKEN: 't', AGENT_TOOLS: 'WebFetch, Read' }).tools).toEqual([

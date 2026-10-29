@@ -11,11 +11,17 @@ ships `bin/lyfestyle-agent.mjs`, a stream-json bridge the desktop app can use as
 
 - `pnpm --filter @lyfestyle/runner test` (vitest; boots an in-process API) / `typecheck`.
 - `pnpm runner` from the root (= `tsx src/index.ts` with the root `.env`). Needs a running API.
+- Deployed to Railway for automation runs ([ADR 0009](../../docs/adr/0009-cloud-runner-for-automations.md)):
+  `Dockerfile` (build from the repo root; runs `src/index.ts` with `tsx`, workspace packages from
+  source, `AGENT_CONNECTOR_TOOLS=none`) and `railway.json` (the service's config file path).
+  Claude Code authenticates with `ANTHROPIC_API_KEY` from the service's variables, which
+  `agentEnv()` passes through. Setup in [docs/deployment.md](../../docs/deployment.md#runner-on-railway).
 - `pnpm --filter @lyfestyle/runner bridge` or `node apps/runner/bin/lyfestyle-agent.mjs`: prompt on
   stdin, optional `--session <conversation id>` (`--resume` is accepted as an alias).
 
 Env (`src/env.ts`): `LYFESTYLE_API_URL` (default `http://localhost:$PORT`), `LYFESTYLE_API_TOKEN`
 (falls back to `API_TOKEN`), `RUNNER_ID` (default the hostname), `RUNNER_CONCURRENCY`,
+`RUNNER_KINDS` (`chat`, `automation`, comma-separated; sent as the claim's `kinds`; empty takes both),
 `AGENT_HARNESS` (`claude-code` | `command`; unset picks `command` when only
 `AGENT_HARNESS_COMMAND` is set), `AGENT_HARNESS_COMMAND`, `AGENT_MODEL`, `AGENT_TOOLS` (comma list
 or `none`), `AGENT_CONNECTOR_TOOLS` (claude.ai connector tool names, or `none`), `AGENT_CWD`

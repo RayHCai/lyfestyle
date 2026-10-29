@@ -41,6 +41,13 @@ interface RunFilter {
     cursor?: string | undefined;
 }
 
+interface ClaimInput {
+    runnerId: string;
+    harness: string;
+    /** Only runs of these kinds; every kind when unset. */
+    kinds?: RunKind[] | undefined;
+}
+
 type StoredEvent = { type: string; data: Record<string, unknown> };
 
 const usageSums = {
@@ -125,12 +132,13 @@ export function createRunsService(deps: {
         return run;
     }
 
-    async function claim(input: { runnerId: string; harness: string }) {
+    async function claim(input: ClaimInput) {
         const result = await db.$transaction(async (tx) => {
             await advisoryLock(tx, CLAIM_LOCK);
             const next = await tx.run.findFirst({
                 where: {
                     status: 'queued',
+                    ...(input.kinds ? { kind: { in: input.kinds } } : {}),
                     OR: [
                         { conversationId: null },
                         { conversation: { runs: { none: { status: 'running' } } } },
@@ -314,11 +322,7 @@ export function createRunsService(deps: {
          * Long-polls for a run; resolves null once `waitMs` passes with nothing queued, or as soon
          * as `signal` aborts, so a runner that hung up is never handed a run.
          */
-        async claimWait(
-            input: { runnerId: string; harness: string },
-            waitMs: number,
-            signal?: AbortSignal,
-        ) {
+        async claimWait(input: ClaimInput, waitMs: number, signal?: AbortSignal) {
             const deadline = Date.now() + waitMs;
             for (;;) {
                 if (signal?.aborted) return null;

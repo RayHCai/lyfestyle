@@ -59,11 +59,43 @@ The same frontend also builds as a static site for phones and browsers:
 static host (Cloudflare Pages, Vercel, a Railway static service) with `index.html` as the fallback.
 It works only through the API: the first visit asks for the API URL and token, and only those are
 kept in the browser. Documents load from the API on every visit (no offline copy), and the agent
-features are hidden because the runner is not hosted. Add the site's origin to the API's
+features are hidden because no runner in the cloud takes chat turns. Add the site's origin to the API's
 `CORS_ORIGINS`.
 
-## Runner
+## Runner on Railway
 
-The runner is not deployed. It runs on your machine (`pnpm runner`) so the agent uses your Claude
-Code login ([ADR 0002](adr/0002-local-runner.md)). Point it at the deployed API with
-`LYFESTYLE_API_URL` and `LYFESTYLE_API_TOKEN` in `.env`.
+Automations run on the API's schedule, and their `ctx.agent` calls need a runner that is always
+up, so a second Railway service runs `apps/runner` for automation runs only
+([ADR 0009](adr/0009-cloud-runner-for-automations.md)). Chat stays on your machine: the desktop
+app's in-app runner claims only chat turns.
+
+1. In the same Railway project, add a service from this repo. In its settings set the config file
+   path to `/apps/runner/railway.json` (it builds `apps/runner/Dockerfile`, pins one replica and
+   rebuilds only when the runner or a workspace package changes). Keep the root directory as `/`.
+   It needs no public domain and no health check: it only makes outbound requests.
+2. Set variables:
+
+    | Variable              | Value                                                                    |
+    | --------------------- | ------------------------------------------------------------------------ |
+    | `LYFESTYLE_API_URL`   | `https://${{api.RAILWAY_PUBLIC_DOMAIN}}`                                 |
+    | `LYFESTYLE_API_TOKEN` | `${{api.API_TOKEN}}`                                                     |
+    | `ANTHROPIC_API_KEY`   | An Anthropic API key. Automation agent runs are billed to it.            |
+    | `RUNNER_KINDS`        | `automation`                                                             |
+    | `RUNNER_ID`           | `railway`: shown as the runner on each agent run in the app              |
+    | `TZ`                  | Your IANA time zone, e.g. `America/Chicago`: the agent's idea of "today" |
+    | `AGENT_MODEL`         | Optional Claude model id                                                 |
+    | `RUNNER_CONCURRENCY`  | Optional; 1 by default                                                   |
+
+    (`api` is the API service's name in Railway; use yours.)
+
+Each automation run's agent calls share one budget of the API's `RUN_BUDGET_USD` ($5 by default):
+the API stops an agent run that passes it, and Claude Code is started with the same
+`--max-budget-usd`. Set the runner's `AGENT_MAX_BUDGET_USD` for a lower cap per call. The image
+sets `AGENT_CONNECTOR_TOOLS=none`: a container has no claude.ai login, so automation agents use the
+`lyfestyle` tools and the API's integrations, not the Gmail or Calendar connectors.
+
+Watch a run from the app's Automations page: click a run's status, its `logs` button or its mark
+on the timeline. The log shows what the code has logged so far and each agent run's messages,
+tool calls and spend as they arrive. The runner's own output is in the service's Railway logs.
+
+`pnpm runner` on your machine still works and, without `RUNNER_KINDS`, takes runs of either kind.

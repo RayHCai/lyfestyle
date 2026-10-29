@@ -14,3 +14,4 @@ decision bites. Supersede a record with a new one instead of rewriting it.
 | [0006](0006-automations-as-approved-code.md) | Automations are user-approved code the API runs                       |
 | [0007](0007-automation-sandbox-process.md)   | Automation code runs in a child process under Node's permission model |
 | [0008](0008-postgres-only.md)                | The API runs on Postgres only; PGlite is for tests                    |
+| [0009](0009-cloud-runner-for-automations.md) | Automation runs go to a runner on Railway; chat stays local           |

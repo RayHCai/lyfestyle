@@ -1,6 +1,6 @@
 # 0002. The agent runs on the user's machine, not on the server
 
-- Status: accepted
+- Status: accepted; superseded for automation runs by [0009](0009-cloud-runner-for-automations.md)
 - Date: 2026-10-26
 
 ## Context

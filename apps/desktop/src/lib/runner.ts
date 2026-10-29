@@ -250,7 +250,14 @@ export function startRunner(client: Api): () => void {
             }
             const harness = activeHarness(useData.getState().settings);
             try {
-                const claim = await client.claimRun(RUNNER_ID, `desktop-${harness}`, CLAIM_WAIT_MS);
+                // Chat turns only: automation runs go to the cloud runner, which works while
+                // this app is closed.
+                const claim = await client.claimRun(
+                    RUNNER_ID,
+                    `desktop-${harness}`,
+                    CLAIM_WAIT_MS,
+                    ['chat'],
+                );
                 if (!live()) {
                     // Claimed as the loop was stopped: hand it back rather than strand it.
                     if (claim) void client.completeRun(claim.run.id, failed('The app stopped'));

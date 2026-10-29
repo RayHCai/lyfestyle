@@ -4,6 +4,7 @@ import {
     runEventInput,
     trimTrailingSlashes,
     type RunEventInput,
+    type RunKind,
 } from '@lyfestyle/shared';
 import type { Harness, HarnessInput, McpServerSpec } from './harness.js';
 
@@ -14,6 +15,8 @@ export interface RunnerOptions {
     /** Where the harness reaches the API's own MCP server. */
     apiUrl: string;
     concurrency?: number;
+    /** Claim only runs of these kinds; every kind when omitted. */
+    kinds?: RunKind[] | undefined;
     waitMs?: number;
     heartbeatMs?: number;
     flushMs?: number;
@@ -203,8 +206,8 @@ type Outcome = {
 
 /** Claims queued runs from the API and executes them through a harness. */
 export class Runner {
-    readonly #o: Required<Omit<RunnerOptions, 'log' | 'soul'>> &
-        Pick<RunnerOptions, 'log' | 'soul'>;
+    readonly #o: Required<Omit<RunnerOptions, 'log' | 'soul' | 'kinds'>> &
+        Pick<RunnerOptions, 'log' | 'soul' | 'kinds'>;
     readonly #active = new Map<string, AbortController>();
     readonly #polling = new AbortController();
     #loops: Promise<void>[] = [];
@@ -251,7 +254,14 @@ export class Runner {
 
     async claim(waitMs: number) {
         const res = await this.#o.api.runs.claim.$post(
-            { json: { runnerId: this.#o.runnerId, harness: this.#o.harness.name, waitMs } },
+            {
+                json: {
+                    runnerId: this.#o.runnerId,
+                    harness: this.#o.harness.name,
+                    waitMs,
+                    ...(this.#o.kinds ? { kinds: this.#o.kinds } : {}),
+                },
+            },
             { init: { signal: this.#polling.signal } },
         );
         if (res.status === 204) return null;
