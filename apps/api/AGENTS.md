@@ -86,7 +86,7 @@ same key to `GROUPS` in `packages/client/src/client.ts` (a `satisfies` check fai
   rows upgrade on their next read or write). Never return secret values from UI routes (`view()`
   returns names and counts only); only `/agent/config` hands them to the runner. An undecryptable
   secret shows as `secretsUnavailable` and can still be deleted.
-- Single replica (root `railway.json` `numReplicas: 1`): `Notifier` is an in-process EventEmitter that
+- Single replica (the Railway service is set to 1 replica, docs/deployment.md): `Notifier` is an in-process EventEmitter that
   drives run SSE streams and claim long-polls, and `startScheduler` ticks in-process. Do not add
   state that needs cross-instance coordination without replacing these.
 - Automations ([ADR 0006](../../docs/adr/0006-automations-as-approved-code.md),

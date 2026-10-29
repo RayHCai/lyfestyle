@@ -11,7 +11,7 @@ single-user app; one small instance has ample headroom.
 
 ## Decision
 
-The root `railway.json` pins `numReplicas: 1`. Cross-request coordination stays in memory instead of
+The API service's Railway settings pin one replica ([deployment](../deployment.md)). Cross-request coordination stays in memory instead of
 going through Postgres `LISTEN/NOTIFY` or Redis.
 
 ## Consequences

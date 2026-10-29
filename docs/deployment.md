@@ -6,14 +6,27 @@ Railway builds and deploys the API from GitHub. CI is the gate: in the service s
 **Wait for CI** so a push to `main` deploys only after the `CI` workflow passes.
 
 1. Create a project from this repo and add a **Postgres** database.
-2. In the API service settings, keep the root directory as `/` and leave the build command, start
-   command and config file path empty. Railway reads the root [`railway.json`](../railway.json): it
-   builds `apps/api/Dockerfile`, health-checks `/health`, only rebuilds when `apps/api`, a
-   workspace package, a root file the image copies (`package.json`, `pnpm-workspace.yaml`,
-   `pnpm-lock.yaml`, `tsconfig.base.json`), `.dockerignore` or `railway.json` change, gives a
-   stopping deploy 30 s between SIGTERM and SIGKILL (`drainingSeconds`), and pins one replica
-   ([ADR 0003](adr/0003-single-api-replica.md)). Set `PORT=3000` and use 3000 as the domain's
-   target port.
+2. Set the API service's settings by hand. The repo has no `railway.json`: Railway applies a root
+   one to every service built from the repo, which made the runner service build the API, and
+   Config as Code stops working on 2026-12-01.
+
+    | Setting                   | Value                                                      |
+    | ------------------------- | ---------------------------------------------------------- |
+    | Source → Root Directory   | empty (`/`)                                                |
+    | Build → Builder           | Dockerfile                                                 |
+    | Build → Dockerfile Path   | `/apps/api/Dockerfile`                                     |
+    | Build → Watch Paths       | `/apps/api/**` plus the shared paths below                 |
+    | Deploy → Start Command    | empty (the image's `CMD`)                                  |
+    | Deploy → Healthcheck Path | `/health`, timeout 60 s                                    |
+    | Deploy → Teardown         | 30 s between SIGTERM and SIGKILL                           |
+    | Deploy → Restart Policy   | On Failure, 5 retries                                      |
+    | Scale → Replicas          | 1 ([ADR 0003](adr/0003-single-api-replica.md)); never more |
+    | Config-as-code            | empty                                                      |
+
+    Shared watch paths, for both services: `/packages/**`, `/package.json`, `/pnpm-lock.yaml`,
+    `/pnpm-workspace.yaml`, `/tsconfig.base.json`, `/.dockerignore`. Set `PORT=3000` and use 3000
+    as the domain's target port.
+
 3. Set variables: `DATABASE_URL=${{Postgres.DATABASE_URL}}`, `API_TOKEN`, `ENCRYPTION_KEY`
    (`pnpm secrets` prints fresh values), and optionally `RESEND_API_KEY`/`RESEND_FROM`. `PUBLIC_URL` defaults to the service's Railway domain.
 4. Generate a public domain. Point the runner and the desktop app at it with `LYFESTYLE_API_URL`.
@@ -69,10 +82,12 @@ up, so a second Railway service runs `apps/runner` for automation runs only
 ([ADR 0009](adr/0009-cloud-runner-for-automations.md)). Chat stays on your machine: the desktop
 app's in-app runner claims only chat turns.
 
-1. In the same Railway project, add a service from this repo. In its settings set the config file
-   path to `/apps/runner/railway.json` (it builds `apps/runner/Dockerfile`, pins one replica and
-   rebuilds only when the runner or a workspace package changes). Keep the root directory as `/`.
-   It needs no public domain and no health check: it only makes outbound requests.
+1. In the same Railway project, add a service from this repo and set: Builder **Dockerfile**,
+   Dockerfile Path `/apps/runner/Dockerfile`, Watch Paths `/apps/runner/**` plus the shared
+   paths above, Replicas 1, Restart Policy On Failure (10 retries), Teardown 30 s. Leave the
+   root directory, start command, health check path and config file path empty, and generate
+   no domain: it only makes outbound requests. The deploy log starts with
+   `[runner] railway taking automation runs from …`.
 2. Set variables:
 
     | Variable              | Value                                                                    |

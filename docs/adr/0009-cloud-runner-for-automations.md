@@ -14,7 +14,7 @@ reaped as stale.
 ## Decision
 
 `apps/runner` also deploys to Railway as its own service (`apps/runner/Dockerfile`,
-`apps/runner/railway.json`) with `RUNNER_KINDS=automation`. It runs Claude Code through the Agent
+settings in the Railway dashboard) with `RUNNER_KINDS=automation`. It runs Claude Code through the Agent
 SDK, billed to an `ANTHROPIC_API_KEY`, with no claude.ai connectors (`AGENT_CONNECTOR_TOOLS=none`).
 `POST /runs/claim` takes `kinds`, and the desktop app's in-app runner claims only `chat`, so chat
 keeps using the user's own Claude login and tools on their machine.

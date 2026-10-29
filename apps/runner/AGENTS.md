@@ -13,7 +13,8 @@ ships `bin/lyfestyle-agent.mjs`, a stream-json bridge the desktop app can use as
 - `pnpm runner` from the root (= `tsx src/index.ts` with the root `.env`). Needs a running API.
 - Deployed to Railway for automation runs ([ADR 0009](../../docs/adr/0009-cloud-runner-for-automations.md)):
   `Dockerfile` (build from the repo root; runs `src/index.ts` with `tsx`, workspace packages from
-  source, `AGENT_CONNECTOR_TOOLS=none`) and `railway.json` (the service's config file path).
+  source, `AGENT_CONNECTOR_TOOLS=none`); the service's settings are in the dashboard. Keep any
+  `railway.json` out of the repo root: Railway applies it to every service built from the repo.
   Claude Code authenticates with `ANTHROPIC_API_KEY` from the service's variables, which
   `agentEnv()` passes through. Setup in [docs/deployment.md](../../docs/deployment.md#runner-on-railway).
 - `pnpm --filter @lyfestyle/runner bridge` or `node apps/runner/bin/lyfestyle-agent.mjs`: prompt on
