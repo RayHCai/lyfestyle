@@ -2,9 +2,12 @@
  * Sends prompts to the agent process and folds its streamed output into the conversation store.
  *
  * Understands Claude Code's `stream-json` lines (system/init, stream_event deltas, assistant
- * messages, result) and falls back to treating unknown lines as plain text, so a custom harness
- * set through LYFESTYLE_AGENT_COMMAND can print either format.
+ * messages, result), Codex's `--json` events (translated by `fromCodex`), and falls back to
+ * treating unknown lines as plain text, so a custom harness can print either format. Events for
+ * an API run the in-app runner holds go to `runner.ts` instead.
  */
+import { activeHarness, fromCodex, harnessCommand } from './harness';
+import { handleRunEvent, ownsRun } from './runner';
 import { call, isTauri, onEvent } from './tauri';
 import { useData } from '../store/data';
 import { addBlocks, appendStderr, patchLast, settle, turnMessages, type Block } from './turn';
@@ -85,14 +88,16 @@ async function start(c: Conversation, keep: number, text: string, sessionId: str
         finish(conversationId, -1, 'The agent only runs inside the desktop app.');
         return;
     }
-    const { settings } = useData.getState();
+    const { settings, env } = useData.getState();
+    const harness = activeHarness(settings);
     try {
         await call('agent_send', {
             args: {
                 conversation_id: conversationId,
                 prompt,
                 session_id: sessionId ?? null,
-                command: settings.agentCommand,
+                harness,
+                command: harnessCommand(harness, settings, env) || null,
                 model: settings.model,
                 effort: settings.effort,
                 todo_mcp_url: settings.todoMcpUrl,
@@ -125,6 +130,7 @@ export async function openConversation(conversationId: string) {
 }
 
 function handle(p: AgentEventPayload) {
+    if (ownsRun(p.conversation_id)) return handleRunEvent(p);
     const data = useData.getState();
     const id = p.conversation_id;
     if (!data.conversations[id]) return;
@@ -155,6 +161,12 @@ function handle(p: AgentEventPayload) {
         );
         return;
     }
+    for (const l of fromCodex(obj, data.settings.model || 'codex') ?? [obj]) handleLine(id, l);
+}
+
+/** One Claude Code stream-json line for a local conversation. */
+function handleLine(id: string, obj: Record<string, unknown>) {
+    const data = useData.getState();
     const type = obj.type as string;
     const sessionId = typeof obj.session_id === 'string' ? obj.session_id : undefined;
 

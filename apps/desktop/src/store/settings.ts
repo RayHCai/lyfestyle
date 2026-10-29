@@ -6,7 +6,7 @@ import { getApi } from './backend';
 import type { SettingsSlice, Slice } from './state';
 
 /** What `agent_env` reports outside Tauri, or when it fails. */
-export const noEnv: AgentEnv = { harness: null, apiUrl: null, apiToken: null };
+export const noEnv: AgentEnv = { harness: null, apiUrl: null, apiToken: null, harnesses: [] };
 
 export const settingsSlice: Slice<SettingsSlice> = (set, get) => ({
     settings: defaultSettings,

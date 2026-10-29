@@ -2,6 +2,8 @@ import { useEffect, useState, type ChangeEvent, type FocusEvent } from 'react';
 import Markdown from '../components/Markdown';
 import Masthead from '../components/Masthead';
 import { describeError } from '../lib/api';
+import { HARNESSES, activeHarness, harnessProblem } from '../lib/harness';
+import { useRunnerStatus } from '../lib/runner';
 import { call, isTauri, isWeb } from '../lib/tauri';
 import { useData } from '../store/data';
 import type { Settings } from '../lib/types';
@@ -88,6 +90,8 @@ export default function SettingsPage() {
     const saveSettings = useData((s) => s.saveSettings);
     const [draft, setDraft] = useState<Settings>(settings);
     const [saveError, setSaveError] = useState('');
+    const runner = useRunnerStatus();
+    const harness = activeHarness(draft);
 
     const commit = (patch: Partial<Settings>) => {
         const next = { ...draft, ...patch };
@@ -156,27 +160,53 @@ export default function SettingsPage() {
                 ) : (
                     <>
                         <Soul />
-                        <div className="field">
-                            <label htmlFor="s-cmd">Agent command</label>
-                            <input
-                                id="s-cmd"
-                                {...field('agentCommand')}
-                                placeholder="claude"
-                                disabled={remote || !!env.harness}
-                            />
-                            <span className="note">
-                                {remote ? (
-                                    'Not used while the API is configured: the runner decides how the agent runs.'
-                                ) : env.harness ? (
-                                    <>
-                                        Overridden by LYFESTYLE_AGENT_COMMAND in the environment:{' '}
-                                        <b className="select-text">{env.harness}</b>
-                                    </>
-                                ) : (
-                                    'Your local Claude Code. Change only if the CLI is not on PATH.'
-                                )}
-                            </span>
-                        </div>
+                        {HARNESSES.map((h) => {
+                            const found = env.harnesses.find((d) => d.id === h.id)?.path;
+                            const problem = harnessProblem(h.id, draft, env);
+                            return (
+                                <div className="field" key={h.id}>
+                                    <label htmlFor={`s-h-${h.id}`}>{h.label}</label>
+                                    <input
+                                        id={`s-h-${h.id}`}
+                                        {...field(h.setting)}
+                                        placeholder={
+                                            h.id === 'command'
+                                                ? 'a stream-json command'
+                                                : (found ?? 'not found on PATH')
+                                        }
+                                        disabled={!!env.harness}
+                                        spellCheck={false}
+                                    />
+                                    <span className="note">
+                                        {h.id === 'command'
+                                            ? 'Prompt on stdin, --session <id> to resume, stream-json or text out.'
+                                            : found
+                                              ? 'Found on PATH. Set a command only to use another install.'
+                                              : 'Not found on PATH. Install it, or give its full path.'}{' '}
+                                        {harness === h.id ? (
+                                            <b>in use</b>
+                                        ) : (
+                                            <button
+                                                className="link"
+                                                disabled={!!env.harness || !!problem}
+                                                onClick={() => commit({ harness: h.id })}
+                                            >
+                                                use
+                                            </button>
+                                        )}
+                                    </span>
+                                </div>
+                            );
+                        })}
+                        {env.harness && (
+                            <div className="field">
+                                <span />
+                                <span className="note">
+                                    Overridden by LYFESTYLE_AGENT_COMMAND in the environment:{' '}
+                                    <b className="select-text">{env.harness}</b>
+                                </span>
+                            </div>
+                        )}
                     </>
                 )}
                 <div className="status">
@@ -195,12 +225,37 @@ export default function SettingsPage() {
                             {api.error && (
                                 <span className="select-text danger-text">{api.error}</span>
                             )}
+                            {!isWeb && (
+                                <span>
+                                    <i
+                                        className={
+                                            'dot' +
+                                            (runner.state === 'off' || runner.error ? ' off' : '')
+                                        }
+                                    />
+                                    Runner:{' '}
+                                    <b>
+                                        {env.harness
+                                            ? 'off (LYFESTYLE_AGENT_COMMAND)'
+                                            : runner.state === 'running'
+                                              ? `running ${runner.runs}`
+                                              : runner.state}
+                                    </b>{' '}
+                                    on <b>{harness}</b>
+                                    {runner.error && (
+                                        <span className="select-text danger-text">
+                                            {' '}
+                                            {runner.error}
+                                        </span>
+                                    )}
+                                </span>
+                            )}
                         </>
                     ) : (
                         <>
                             <span>
                                 <i className={'dot' + (env.harness ? '' : ' off')} />
-                                Harness: <b>{env.harness ? 'environment' : 'local Claude Code'}</b>
+                                Harness: <b>{env.harness ? 'environment' : harness}</b>
                             </span>
                             <span>
                                 Data folder: <b className="select-text">{dataDir}</b>

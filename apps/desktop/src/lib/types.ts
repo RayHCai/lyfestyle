@@ -52,7 +52,14 @@ export { TRASH_DAYS } from '@lyfestyle/shared';
 
 export interface Settings {
     name: string;
+    /** The harness new turns use: `claude-code`, `codex` or `command`. */
+    harness: string;
+    /** Claude Code's command; empty finds `claude` on PATH. */
     agentCommand: string;
+    /** Codex's command; empty finds `codex` on PATH. */
+    codexCommand: string;
+    /** A stream-json command for the `command` harness. */
+    customCommand: string;
     model: string;
     /** Claude Code `--effort`: low, medium, high, xhigh or max; empty for its default. */
     effort: string;
@@ -68,7 +75,10 @@ export interface Settings {
 
 export const defaultSettings: Settings = {
     name: '',
-    agentCommand: 'claude',
+    harness: 'claude-code',
+    agentCommand: '',
+    codexCommand: '',
+    customCommand: '',
     model: '',
     effort: '',
     workingDirectory: '',
@@ -88,6 +98,8 @@ export interface AgentEnv {
     harness: string | null;
     apiUrl: string | null;
     apiToken: string | null;
+    /** Harness CLIs found on PATH (`claude-code`, `codex`), with their path or null. */
+    harnesses: { id: string; path: string | null }[];
 }
 
 export type View =

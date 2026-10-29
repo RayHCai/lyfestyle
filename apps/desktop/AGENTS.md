@@ -1,8 +1,9 @@
 # @lyfestyle/desktop
 
 React 19 + Tauri 2 desktop app (Windows first). In local mode it keeps data in flat files and spawns
-the user's Claude Code (or `LYFESTYLE_AGENT_COMMAND`); in API mode it talks to `apps/api` and
-follows runs over SSE. User-facing docs: [README.md](README.md); setup in
+the selected harness (Claude Code by default, Codex, a custom command, or `LYFESTYLE_AGENT_COMMAND`);
+in API mode it talks to `apps/api`, follows runs over SSE, and is itself a runner for them
+(`lib/runner.ts`). User-facing docs: [README.md](README.md); setup in
 [docs/development.md](../../docs/development.md).
 
 ## Commands
@@ -72,10 +73,20 @@ Verify UI changes with `typecheck`, `test`, `lint:rust`, `test:rust` and screens
   opens a tab in a browser and copies the URL in Tauri, never navigating the webview), icons (rail
   and trash only). `src/hooks/`: `useAttempt` (keeps an action's error for the UI),
   `useQuoteSelection`, `useTypeToCompose`.
-- `src/lib/commands.ts` composer slash commands: `/model` and `/effort` are handled in the app
-  (they set `settings.model`/`effort`, which `agent_send` passes as `--model`/`--effort`); any
-  other `/name` is a skill and is sent as typed for Claude Code to expand. Local mode only: the
-  runner sets its own model and loads no user skills (`settingSources: []`).
+- `src/lib/commands.ts` composer slash commands: `/harness`, `/model` and `/effort` are handled in
+  the app (they set `settings.harness`/`model`/`effort`, which `agent_send` uses in both modes,
+  since the in-app runner launches API runs too); any other `/name` is a skill and is sent as typed
+  for Claude Code to expand. `apps/runner`, when it claims a run instead, uses its own settings.
+- `src/lib/harness.ts` the harnesses (`claude-code`, `codex`, `command`), which Settings field holds
+  each one's command (empty uses the path `agent_env` found on PATH), and `fromCodex`, which turns
+  `codex exec --json` events into Claude Code stream-json lines so one parser serves both.
+- `src/lib/runner.ts` API mode's in-app runner, started by `App.tsx` and off under
+  `LYFESTYLE_AGENT_COMMAND` (the bridge would queue runs for itself): long-polls `/runs/claim` as
+  runner `desktop`, runs each claim through `agent_send` keyed by run id (the run's MCP servers from
+  `/agent/config` with its agent token replace the local tool server; Claude Code gets the run's
+  `--max-budget-usd`), maps lines to run events (`toRunEvents`), heartbeats and completes. Sessions
+  are recorded as `desktop-<harness>` so only the same harness resumes them. `agent.ts` hands it
+  every `agent-event` whose id is a run it holds; Settings shows its status.
 - `src/store/app.ts` zustand UI state: the open `tabs` and the `active` one, `view` (the active
   tab's view, what the router renders), sidebar, compact, console. `navigate(view)` focuses the
   view's tab if it has one, turns a fresh home tab into it, or opens a new tab beside the active one;
@@ -152,7 +163,12 @@ Verify UI changes with `typecheck`, `test`, `lint:rust`, `test:rust` and screens
   and tool names, `result` sets the final text/error; non-JSON lines are plain text. A stderr line
   matching `No conversation found` clears the stored session. The runner's bridge and any
   `LYFESTYLE_AGENT_COMMAND` must keep producing this format.
-- `agent.rs`: with `LYFESTYLE_AGENT_COMMAND` set, it passes `--session <id>`; otherwise it runs
+- `agent.rs`: `agent_env` reports where `claude` and `codex` are on PATH. Codex runs as
+  `codex exec --json --skip-git-repo-check [--model] [-c model_reasoning_effort] -c mcp_servers.… [resume <id>] -`;
+  MCP headers reach it through `env_http_headers` so tokens stay off its command line, and a fresh
+  session gets SOUL.md prepended to the prompt. A send with `mcp_servers` (an API run) writes them
+  to `mcp-<run id>.json`, deleted when the process exits.
+  With `LYFESTYLE_AGENT_COMMAND` (or the `command` harness) set, it passes `--session <id>`; for Claude Code it runs
   `claude -p --output-format stream-json --verbose --include-partial-messages [--model]
 [--effort] --mcp-config <data>/mcp.json --allowedTools mcp__lyfestyle[,mcp__todo] [--resume <id>]`.
   Every send rewrites `mcp.json` and sets `LYFESTYLE_MCP_CONFIG` to it for either kind of command. Prompt goes on stdin; stdout/stderr come back as `agent-event`

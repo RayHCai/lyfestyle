@@ -4,6 +4,8 @@ import { useData } from './store/data';
 import { initAgent } from './lib/agent';
 import { describeError } from './lib/api';
 import { pollNotifications } from './lib/notifications';
+import { startRunner } from './lib/runner';
+import { getApi } from './store/backend';
 import { isWeb } from './lib/tauri';
 import Titlebar from './components/Titlebar';
 import Sidebar from './components/Sidebar';
@@ -26,6 +28,7 @@ export default function App() {
     const ready = useData((s) => s.ready);
     const load = useData((s) => s.load);
     const mode = useData((s) => s.mode);
+    const apiUrl = useData((s) => s.api.url);
     const view = useApp((s) => s.view);
     const sidebarOpen = useApp((s) => s.sidebarOpen);
     const compact = useApp((s) => s.compact);
@@ -70,6 +73,14 @@ export default function App() {
             window.removeEventListener('online', refresh);
         };
     }, [ready, mode]);
+
+    // API mode: this app is the runner for its own chat turns, through the local harness.
+    useEffect(() => {
+        const client = getApi();
+        if (!ready || mode !== 'api' || !client) return;
+        return startRunner(client);
+        // oxlint-disable-next-line react/exhaustive-effect-dependencies -- a new API URL means a new client to claim from
+    }, [ready, mode, apiUrl]);
 
     useEffect(() => {
         const mq = window.matchMedia(COMPACT);

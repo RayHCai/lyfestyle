@@ -9,7 +9,7 @@ const labels = (value: string) => slashOptions(value, skills).map((o) => o.label
 
 describe('slashOptions', () => {
     it('lists app commands, then skills, for a bare slash', () => {
-        expect(labels('/')).toEqual(['/model', '/effort', '/review', '/research']);
+        expect(labels('/')).toEqual(['/harness', '/model', '/effort', '/review', '/research']);
     });
 
     it('narrows by the typed prefix, ignoring case', () => {
@@ -31,5 +31,12 @@ describe('slashOptions', () => {
         expect(labels('hello')).toEqual([]);
         expect(labels('/review this branch')).toEqual([]);
         expect(labels('/zzz')).toEqual([]);
+    });
+});
+
+describe('/harness', () => {
+    it('offers the harness ids as arguments', () => {
+        expect(labels('/harness ')).toEqual(['claude-code', 'codex', 'command']);
+        expect(labels('/harness co')).toEqual(['codex', 'command']);
     });
 });

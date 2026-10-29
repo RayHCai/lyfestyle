@@ -7,7 +7,9 @@ import {
     streamRunEvents,
     type ContentBlock,
     type MessageRole,
+    type ModelUsageTotals,
     type RunEvent,
+    type RunEventInput,
     type RunKind,
     type RunStatus,
 } from '@lyfestyle/shared';
@@ -45,6 +47,28 @@ export interface ApiConversation {
     title: string | null;
     createdAt: string;
     updatedAt: string;
+}
+/** What `POST /runs/claim` hands a runner (docs/api.md, Runner protocol). */
+export interface ApiClaim {
+    run: ApiRun;
+    session: { harness: string; sessionId: string; usage: ModelUsageTotals[] } | null;
+    history: { role: MessageRole; content: ContentBlock[] }[];
+    automation: { id: string; name: string } | null;
+    agentToken: string;
+}
+/** `GET /agent/config`: the built-in tool server's path and every enabled registered server. */
+export interface ApiAgentConfig {
+    builtinServer: { name: string; path: string };
+    mcpServers: (
+        | { name: string; transport: 'http' | 'sse'; url: string; headers: Record<string, string> }
+        | {
+              name: string;
+              transport: 'stdio';
+              command: string;
+              args: string[];
+              env: Record<string, string>;
+          }
+    )[];
 }
 export interface ApiConversationFull extends ApiConversation {
     messages: ApiMessage[];
@@ -378,6 +402,39 @@ export class Api {
         });
         if (opts.origin) q.set('origin', opts.origin);
         return this.req<ApiViewSummary>('GET', `/metrics/views/summary?${q}`);
+    }
+
+    /** Runner protocol: waits up to `waitMs` for a queued run; null when none came. */
+    async claimRun(runnerId: string, harness: string, waitMs: number) {
+        return (
+            (await this.req<ApiClaim | undefined>('POST', '/runs/claim', {
+                runnerId,
+                harness,
+                waitMs,
+            })) ?? null
+        );
+    }
+    agentConfig() {
+        return this.req<ApiAgentConfig>('GET', '/agent/config');
+    }
+    postRunEvents(id: string, events: RunEventInput[]) {
+        return this.req<{ cancelRequested: boolean }>('POST', `/runs/${id}/events`, { events });
+    }
+    heartbeatRun(id: string) {
+        return this.req<{ status: RunStatus; cancelRequested: boolean }>(
+            'POST',
+            `/runs/${id}/heartbeat`,
+        );
+    }
+    completeRun(
+        id: string,
+        result: {
+            status: 'succeeded' | 'failed' | 'cancelled';
+            output?: string;
+            error?: string;
+        },
+    ) {
+        return this.req<unknown>('POST', `/runs/${id}/complete`, result);
     }
 
     async listMcpServers() {
