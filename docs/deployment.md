@@ -75,6 +75,10 @@ kept in the browser. Documents load from the API on every visit (no offline copy
 features are hidden because no runner in the cloud takes chat turns. Add the site's origin to the API's
 `CORS_ORIGINS`.
 
+On Vercel, import the repo and set Root Directory to `apps/desktop`; `apps/desktop/vercel.json`
+sets the install and build commands, the `dist` output and the `index.html` fallback. The site
+needs no environment variables.
+
 ## Runner on Railway
 
 Automations run on the API's schedule, and their `ctx.agent` calls need a runner that is always
