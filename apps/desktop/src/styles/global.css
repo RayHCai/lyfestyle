@@ -1898,7 +1898,11 @@ select {
 }
 
 /* Automations: deploys waiting for approval, a day's timeline, the deployed list. Everything here
-   is read-only except the switch, run now, delete and the approve/reject pair. */
+   is read-only except the switch, run now, delete and the approve/reject pair. Centred in the
+   window like page views. */
+.auto {
+    margin-inline: auto;
+}
 .auto .note {
     color: var(--faint);
 }
@@ -2238,7 +2242,55 @@ select {
     text-underline-offset: 3px;
 }
 
-/* A run's log: picks of recent runs, the run's figures, the code's lines, then each agent run. */
+/* A run's log: a floating panel over the page with a scrim, below the console so Ctrl K still
+   reaches it. The head stays put while picks of recent runs, the run's figures, the code's lines
+   and each agent run scroll beneath it. */
+.runlog-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 38;
+    background: rgba(55, 53, 47, 0.16);
+    animation: fade 0.16s var(--ease) both;
+}
+.runlog {
+    position: fixed;
+    inset: 8vh auto auto 50%;
+    margin: 0;
+    padding: 0;
+    color: var(--ink);
+    z-index: 39;
+    width: min(var(--content), calc(100% - 48px));
+    max-width: none;
+    max-height: 84vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    border: var(--dash);
+    border-radius: 4px;
+    box-shadow: 0 24px 60px -24px rgba(55, 53, 47, 0.35);
+    transform: translateX(-50%);
+    animation: pop 0.22s var(--ease) both;
+}
+.runlog:focus {
+    outline: none;
+}
+.runlog .sec-head {
+    padding: 14px 20px 4px;
+}
+.runlog .sec-h {
+    margin: 0;
+}
+.rl-body {
+    min-height: 0;
+    overflow: auto;
+    padding: 8px 20px 18px;
+}
+@keyframes pop {
+    from {
+        opacity: 0;
+        transform: translate(-50%, -8px) scale(0.98);
+    }
+}
 .rl-picks {
     display: flex;
     flex-wrap: wrap;

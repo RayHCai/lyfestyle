@@ -1,40 +1,81 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { TERMINAL_RUN_STATUSES, type RunEvent } from '@lyfestyle/shared';
 import type { ApiAutomationAgentRun, ApiAutomationRunDetail, ApiAutomationRun } from '../lib/api';
 import { eventLines } from '../lib/run-log';
 import { clock, cost, duration } from '../lib/time';
+import { useApp } from '../store/app';
 import { getApi } from '../store/data';
 
 /** How often a run still going is fetched again. */
 const POLL_MS = 2_000;
 const ended = (status: string) => (TERMINAL_RUN_STATUSES as readonly string[]).includes(status);
 
-/**
- * One automation run as it happens (key it by `runId`): what its code logged, then each agent run it queued with
- * that agent's messages, tool calls and spend. Polls until the run and its agent runs end.
- */
-export default function RunLog({
-    automationId,
-    runId,
-    onPick,
-    onClose,
-}: {
+interface Props {
     automationId: string;
     runId: string;
     onPick: (runId: string) => void;
     onClose: () => void;
-}) {
+}
+
+/**
+ * One automation run as it happens, floating over the page: what its code logged, then each agent
+ * run it queued with that agent's messages, tool calls and spend. Polls until the run and its agent
+ * runs end. Esc or a click outside closes it; focus goes back to what opened it.
+ */
+export default function RunLog(props: Props) {
+    const box = useRef<HTMLDialogElement>(null);
+    const titleId = useId();
+    const { onClose } = props;
+
+    useEffect(() => {
+        const before =
+            document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        box.current?.focus();
+        return () => {
+            if (before?.isConnected) before.focus();
+        };
+    }, []);
+
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            // The console floats above the log, so its Esc comes first.
+            if (e.key !== 'Escape' || useApp.getState().consoleOpen) return;
+            // Capture phase, so the app's Esc does not also close a compact sidebar.
+            e.stopPropagation();
+            onClose();
+        };
+        window.addEventListener('keydown', onKey, true);
+        return () => window.removeEventListener('keydown', onKey, true);
+    }, [onClose]);
+
+    // Portalled: the page's entry animation leaves a transform that would pin `fixed` to the page.
+    return createPortal(
+        <>
+            <div className="runlog-scrim" role="presentation" onClick={onClose} />
+            {/* Not `showModal()`: the top layer would sit above the console. */}
+            <dialog
+                ref={box}
+                open
+                className="runlog"
+                aria-modal="true"
+                aria-labelledby={titleId}
+                tabIndex={-1}
+            >
+                {/* Keyed by run so picking another resets the fetch without reopening the panel. */}
+                <RunBody key={props.runId} {...props} titleId={titleId} />
+            </dialog>
+        </>,
+        document.body,
+    );
+}
+
+function RunBody({ automationId, runId, onPick, onClose, titleId }: Props & { titleId: string }) {
     const [run, setRun] = useState<ApiAutomationRunDetail | null>(null);
     const [recent, setRecent] = useState<ApiAutomationRun[]>([]);
     const [problem, setProblem] = useState<string | null>(null);
     /** When the run was last fetched: a run still going is timed up to then. */
     const [now, setNow] = useState(() => Date.now());
-    const box = useRef<HTMLElement>(null);
-
-    // Keyed by run, so this brings each newly opened run into view.
-    useEffect(() => {
-        box.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    }, []);
 
     useEffect(() => {
         let stopped = false;
@@ -73,76 +114,80 @@ export default function RunLog({
     const budget = run?.agentRuns.reduce((sum, r) => sum + r.budgetUsd, 0) ?? 0;
 
     return (
-        <section className="auto-sec runlog" ref={box} aria-live="polite">
+        <>
             <div className="sec-head">
-                <h2 className="sec-h">run {run ? <span>{run.name}</span> : null}</h2>
+                <h2 className="sec-h" id={titleId}>
+                    run {run ? <span>{run.name}</span> : null}
+                </h2>
                 <button className="btn" onClick={onClose}>
                     close
                 </button>
             </div>
-            {recent.length > 1 && (
-                <div className="rl-picks" role="tablist" aria-label="Recent runs">
-                    {recent.map((r) => (
-                        <button
-                            key={r.id}
-                            role="tab"
-                            aria-selected={r.id === runId}
-                            className={'rl-pick ' + r.status + (r.id === runId ? ' on' : '')}
-                            onClick={() => onPick(r.id)}
-                        >
-                            {clock(r.startedAt)}
-                        </button>
-                    ))}
-                </div>
-            )}
-            {problem && <div className="err select-text">{problem}</div>}
-            {!run ? (
-                <p className="empty">loading…</p>
-            ) : (
-                <div className="rl select-text">
-                    <div className="rl-meta">
-                        <span className={'rl-status ' + run.status}>{run.status}</span>
-                        <span>{run.trigger === 'manual' ? 'run by hand' : 'scheduled'}</span>
-                        <span>v{run.version}</span>
-                        <span>
-                            {clock(start)} · {duration(end - start)}
-                        </span>
-                        <span>
-                            {cost(run.costUsd)}
-                            {budget > 0 ? ` of ${cost(budget)}` : ''}
-                        </span>
+            <div className="rl-body" aria-live="polite">
+                {recent.length > 1 && (
+                    <div className="rl-picks" role="tablist" aria-label="Recent runs">
+                        {recent.map((r) => (
+                            <button
+                                key={r.id}
+                                role="tab"
+                                aria-selected={r.id === runId}
+                                className={'rl-pick ' + r.status + (r.id === runId ? ' on' : '')}
+                                onClick={() => onPick(r.id)}
+                            >
+                                {clock(r.startedAt)}
+                            </button>
+                        ))}
                     </div>
-                    {run.error && <pre className="rl-error">{run.error}</pre>}
-                    {run.output && (
-                        <details className="rl-output">
-                            <summary>output</summary>
-                            <pre>{run.output}</pre>
-                        </details>
-                    )}
+                )}
+                {problem && <div className="err select-text">{problem}</div>}
+                {!run ? (
+                    <p className="empty">loading…</p>
+                ) : (
+                    <div className="rl select-text">
+                        <div className="rl-meta">
+                            <span className={'rl-status ' + run.status}>{run.status}</span>
+                            <span>{run.trigger === 'manual' ? 'run by hand' : 'scheduled'}</span>
+                            <span>v{run.version}</span>
+                            <span>
+                                {clock(start)} · {duration(end - start)}
+                            </span>
+                            <span>
+                                {cost(run.costUsd)}
+                                {budget > 0 ? ` of ${cost(budget)}` : ''}
+                            </span>
+                        </div>
+                        {run.error && <pre className="rl-error">{run.error}</pre>}
+                        {run.output && (
+                            <details className="rl-output">
+                                <summary>output</summary>
+                                <pre>{run.output}</pre>
+                            </details>
+                        )}
 
-                    <h3 className="rl-h">code</h3>
-                    {run.logs.length === 0 ? (
-                        <p className="rl-none">
-                            {run.status === 'running' ? 'nothing logged yet' : 'nothing logged'}
-                        </p>
-                    ) : (
-                        <ol className="rl-lines">
-                            {run.logs.map((l, i) => (
-                                // oxlint-disable-next-line react/no-array-index-key -- logs only grow at the end and have no id
-                                <li key={i} className={l.level}>
-                                    <time>{clock(l.at)}</time>
-                                    <span>{l.message}</span>
-                                </li>
-                            ))}
-                        </ol>
-                    )}
+                        <h3 className="rl-h">code</h3>
+                        {run.logs.length === 0 ? (
+                            <p className="rl-none">
+                                {run.status === 'running' ? 'nothing logged yet' : 'nothing logged'}
+                            </p>
+                        ) : (
+                            <ol className="rl-lines">
+                                {run.logs.map((l, i) => (
+                                    // oxlint-disable-next-line react/no-array-index-key -- logs only grow at the end and have no id
+                                    <li key={i} className={l.level}>
+                                        <time>{clock(l.at)}</time>
+                                        <span>{l.message}</span>
+                                    </li>
+                                ))}
+                            </ol>
+                        )}
 
-                    {run.agentRuns.map((a, i) => (
-                        <AgentRun key={a.id} run={a} n={i + 1} />
-                    ))}
-                </div>
-            )}
-        </section>
+                        {run.agentRuns.map((a, i) => (
+                            <AgentRun key={a.id} run={a} n={i + 1} />
+                        ))}
+                    </div>
+                )}
+            </div>
+        </>
     );
 }
 

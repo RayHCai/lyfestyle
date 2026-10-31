@@ -134,7 +134,6 @@ function Remote() {
 
                 {inspect && (
                     <RunLog
-                        key={inspect.runId}
                         automationId={inspect.automationId}
                         runId={inspect.runId}
                         onPick={(runId) => setInspect({ ...inspect, runId })}

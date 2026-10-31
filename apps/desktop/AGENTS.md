@@ -50,7 +50,8 @@ Verify UI changes with `typecheck`, `test`, `lint:rust`, `test:rust` and screens
   tools, and the page lists pending deploys (with a line diff against the deployed version) to
   approve or reject, a 24 h timeline (`components/Timeline.tsx`, one lane per automation, runs
   and upcoming slots, hover tooltip) and the deployed list (switch, run now, logs, delete).
-  Clicking a run's mark, its last-run status or `logs` opens `components/RunLog.tsx`: the run from
+  Clicking a run's mark, its last-run status or `logs` opens `components/RunLog.tsx`, a modal
+  portalled to `body` (scrim, Esc or an outside click closes it, below the console): the run from
   `GET /automations/runs/:id` (code logs live while it runs) and each agent run's events from
   `GET /runs/:id/events` (lines from `lib/run-log.ts`), polled every 2 s until all have ended.
   There is no create or edit form; do not add one. Local mode shows only a note. The same deploy card
@@ -233,15 +234,15 @@ Verify UI changes with `typecheck`, `test`, `lint:rust`, `test:rust` and screens
   console and sidebar draw `>` instead. Hover-only actions also show on `:focus-within`. The `/` menu above the composer is the same kind of listing.
 - Fields are an underline, not a box: dashed at rest, solid near-black on focus (`.field`,
   `.composer-wrap`). Labels sit in a 12ch column to the left of the field (`.field` is a grid),
-  stacking above it under 760px. Radii are 2-4px and only on code, errors and the console.
-  The only shadows are on the console and the compact drawer.
+  stacking above it under 760px. Radii are 2-4px and only on code, errors and the floating panels
+  (console, confirm, run log). The only shadows are on those panels and the compact drawer.
 - Layout: a 36px titlebar, then the rail (`--rail`, 252px) beside a 32px tab strip and the page.
   The whole webview renders at 80% zoom (set in `lib.rs`; `pnpm dev` in a browser is not zoomed),
   so these sizes are CSS pixels before zoom. The sidebar starts closed and closes again when the
   window crosses the breakpoint; it opens with the toggle. Under 900px (`compact` in `store/app.ts`) it is a drawer over
   the page that closes on navigate and Esc. The page content is left-aligned and capped at
   `--content` (820px) with a `--gutter`; the landing page is the exception, centred in the window
-  so the composer sits in the middle, and page views (`.pv`) is centred too. Pages open with a `Masthead` (eyebrow plus bold title).
+  so the composer sits in the middle, and page views (`.pv`) and automations (`.auto`) are centred too. Pages open with a `Masthead` (eyebrow plus bold title).
   Lists are numbered rows between dashed rules (`.rows` uses a CSS counter). Two-column pages
   (`.two`) are a 300px list column with a dashed right rule; they stack under 760px.
 - Conversations are a transcript: `.msg` is a grid with a 6ch gutter where `::before` writes
