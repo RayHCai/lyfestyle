@@ -4,12 +4,13 @@
  * or the Lyfestyle API, and loads or refreshes everything from it.
  */
 import { create } from 'zustand';
-import { Api, describeError } from '../lib/api';
-import { readJSON, storage } from '../lib/storage';
+import { Api, ApiError, describeError } from '../lib/api';
+import { readJSON, storage, writeJSON } from '../lib/storage';
 import { parseConversation, parseSettings } from '../lib/stored';
 import { PageSync } from '../lib/sync';
-import { call, isTauri } from '../lib/tauri';
+import { call, isTauri, isWeb } from '../lib/tauri';
 import type { AgentEnv, Conversation } from '../lib/types';
+import * as web from '../lib/web';
 import { automationsSlice } from './automations';
 import { getApi, isActive, setBackend } from './backend';
 import { conversationsSlice, deletedConversations, fromApiConversation } from './conversations';
@@ -37,9 +38,10 @@ export const useData = create<DataState>()((set, get, store) => ({
 
     async load() {
         const run = ++loads;
-        const [stored, dataDir] = await Promise.all([
+        const [stored, dataDir, webToken] = await Promise.all([
             readJSON<unknown>('settings.json', null),
             storage.dir(),
+            isWeb ? web.readToken() : '',
         ]);
         let env: AgentEnv = noEnv;
         if (isTauri) {
@@ -50,9 +52,14 @@ export const useData = create<DataState>()((set, get, store) => ({
             }
         }
         if (run !== loads) return;
-        const settings = parseSettings(stored);
-        const url = (settings.apiUrl || env.apiUrl || '').trim();
-        const token = (settings.apiToken || env.apiToken || '').trim();
+        let settings = parseSettings(stored);
+        if (isWeb && (settings.apiUrl || settings.apiToken)) {
+            // Earlier web builds kept a pasted API_TOKEN here; the build now signs in instead.
+            settings = { ...settings, apiUrl: '', apiToken: '' };
+            void writeJSON('settings.json', settings);
+        }
+        const url = isWeb ? web.WEB_API_URL : (settings.apiUrl || env.apiUrl || '').trim();
+        const token = isWeb ? webToken : (settings.apiToken || env.apiToken || '').trim();
         set({ settings, env, dataDir });
         void get().loadSkills();
 
@@ -118,6 +125,7 @@ export const useData = create<DataState>()((set, get, store) => ({
         if (!client) return;
         // Documents come from the local copy; this round brings it up to date with the server.
         const synced = get().reloadFiles();
+        let expired = false;
         try {
             const [convs, automations, deploys] = await Promise.all([
                 client.listConversations(),
@@ -142,10 +150,23 @@ export const useData = create<DataState>()((set, get, store) => ({
                 };
             });
         } catch (e) {
-            if (isActive(client))
+            // The dashboard token ran out or the password changed: ask for the password again.
+            if (isWeb && e instanceof ApiError && e.status === 401) expired = true;
+            else if (isActive(client))
                 set({ api: { state: 'error', url: client.baseUrl, error: describeError(e) } });
         }
         await synced;
+        if (expired && isActive(client)) await get().signOut();
+    },
+
+    async signIn(password) {
+        await web.signIn(password);
+        await get().load();
+    },
+
+    async signOut() {
+        await web.signOut();
+        await get().load();
     },
 }));
 

@@ -20,6 +20,7 @@ import Documents from './pages/Documents';
 import Automations from './pages/Automations';
 import PageViews from './pages/PageViews';
 import SettingsPage from './pages/Settings';
+import SignIn from './pages/SignIn';
 
 /** Below this width the rail would crowd the page, so the sidebar becomes a drawer. */
 const COMPACT = '(max-width: 900px)';
@@ -128,10 +129,7 @@ export default function App() {
 
     const key = view.name + ('id' in view && view.id ? ':' + view.id : '');
     let page: ReactNode = null;
-    if (ready && isWeb && mode !== 'api') {
-        // The web build has no local files to fall back on: it needs the API first.
-        page = <SettingsPage />;
-    } else if (ready) {
+    if (ready) {
         switch (view.name) {
             case 'home':
                 page = <Home />;
@@ -180,6 +178,14 @@ export default function App() {
                         </div>
                     </div>
                 </main>
+            </div>
+        );
+    // The web build has no local files to fall back on, so it shows nothing until signed in.
+    if (isWeb && mode !== 'api')
+        return (
+            <div className={shell}>
+                <Titlebar />
+                <main className="view">{ready && <SignIn />}</main>
             </div>
         );
     return (

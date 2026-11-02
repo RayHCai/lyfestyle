@@ -11,9 +11,14 @@ in API mode it talks to `apps/api`, follows runs over SSE, and is itself a runne
 - `pnpm desktop` / `pnpm desktop:build` from the root (`tauri dev` / `tauri build`).
 - `pnpm --filter @lyfestyle/desktop dev`: UI alone in a browser on :1420 (localStorage, no agent).
 - `dev:web` / `build:web`: the hosted web build (`--mode web`, `isWeb` in `lib/tauri.ts`). API mode
-  only (Settings asks for the URL and token until connected); conversations, the composer and the
-  console's ask are hidden since no runner is hosted; `storage.ts` keeps everything but
-  `settings.json` in memory, so nothing is cached offline. Touch screens (`hover: none`) always
+  only, on the API fixed at build time by `VITE_API_URL` (`lib/web.ts`; locally, put it in
+  `apps/desktop/.env.web.local`). Until it holds a dashboard token it shows only
+  `pages/SignIn.tsx`, which trades the API's `DASHBOARD_PASSWORD` for one (`POST /auth/login`); a
+  401 from `refresh` drops the token and returns there, and Settings has `sign out` instead of
+  the URL and token fields. It never uses `settings.apiUrl`/`apiToken` and clears a token an
+  older build kept there. Conversations, the composer and the console's ask are hidden since no
+  runner is hosted; `storage.ts` keeps everything but `settings.json` and `token.json` in memory,
+  so nothing is cached offline. Touch screens (`hover: none`) always
   show hover-only actions.
 - `pnpm --filter @lyfestyle/desktop typecheck` (`tsc -b`); `build` = `tsc -b && vite build`.
 - Screenshot mode, inside `apps/desktop`: `pnpm exec vite --mode screenshot`, then open
@@ -41,7 +46,7 @@ Verify UI changes with `typecheck`, `test`, `lint:rust`, `test:rust` and screens
   `Console.tsx` if the console should reach it. A failed `load` shows a startup error with retry;
   the page sits in an `ErrorBoundary`; `useData.notice` shows above the page until dismissed.
 - `src/pages/` one component per view (Home, Conversation(s), Documents, Automations, PageViews,
-  Settings).
+  Settings), plus SignIn, which the web build shows instead of the app until signed in.
   Documents has a trash in API mode only (the list header's `trash` swaps the list for trashed
   pages with a `restore`); the API purges a page `TRASH_DAYS` (7) after it is deleted, and
   `lib/types.ts` mirrors that constant. Local mode still deletes the files outright. In API mode
@@ -161,7 +166,7 @@ Verify UI changes with `typecheck`, `test`, `lint:rust`, `test:rust` and screens
   routes change.
 - Store code picks its backend through `store/backend.ts`; local mode must keep working with no API
   configured. Mode is `api` when Settings or `LYFESTYLE_API_URL`/`_TOKEN` give both
-  URL and token.
+  URL and token; in the web build, when `VITE_API_URL` is set and a dashboard token is kept.
 - Stream-json parsing in `lib/agent.ts`: `system` lines carry `session_id` (stored as the
   conversation's `sessionId`), `stream_event` text deltas fill `live`, `assistant` lines append text
   and tool names, `result` sets the final text/error; non-JSON lines are plain text. A stderr line

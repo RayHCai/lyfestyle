@@ -88,6 +88,7 @@ export default function SettingsPage() {
     const mode = useData((s) => s.mode);
     const api = useData((s) => s.api);
     const saveSettings = useData((s) => s.saveSettings);
+    const signOut = useData((s) => s.signOut);
     const [draft, setDraft] = useState<Settings>(settings);
     const [saveError, setSaveError] = useState('');
     const runner = useRunnerStatus();
@@ -129,35 +130,8 @@ export default function SettingsPage() {
                     <input id="s-name" {...field('name')} placeholder="Shown in the greeting" />
                 </div>
 
-                {isWeb ? (
-                    <>
-                        {/* The web build has no local files, so it works only through the API. */}
-                        <div className="field">
-                            <label htmlFor="s-api">API URL</label>
-                            <input
-                                id="s-api"
-                                {...field('apiUrl')}
-                                placeholder="https://api.example.com"
-                                inputMode="url"
-                                autoCapitalize="off"
-                                spellCheck={false}
-                            />
-                        </div>
-                        <div className="field">
-                            <label htmlFor="s-token">API token</label>
-                            <input
-                                id="s-token"
-                                type="password"
-                                {...field('apiToken')}
-                                autoComplete="off"
-                            />
-                            <span className="note">
-                                Kept in this browser. Documents are not: they load from the API on
-                                every visit.
-                            </span>
-                        </div>
-                    </>
-                ) : (
+                {/* The web build's API is fixed when it is built and needs no agent settings. */}
+                {!isWeb && (
                     <>
                         <Soul />
                         {HARNESSES.map((h) => {
@@ -211,16 +185,19 @@ export default function SettingsPage() {
                 )}
                 <div className="status">
                     {saveError && <span className="select-text danger-text">{saveError}</span>}
-                    {isWeb && !remote ? (
-                        <span>
-                            <i className="dot off" />
-                            API: <b>not connected</b>
-                        </span>
-                    ) : remote ? (
+                    {remote ? (
                         <>
                             <span>
                                 <i className={'dot' + (api.state === 'ok' ? '' : ' off')} />
                                 API: <b>{apiState}</b> at <b className="select-text">{api.url}</b>
+                                {isWeb && (
+                                    <>
+                                        {' '}
+                                        <button className="link" onClick={() => void signOut()}>
+                                            sign out
+                                        </button>
+                                    </>
+                                )}
                             </span>
                             {api.error && (
                                 <span className="select-text danger-text">{api.error}</span>

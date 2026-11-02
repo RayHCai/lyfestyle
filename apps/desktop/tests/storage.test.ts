@@ -19,11 +19,12 @@ describe('storage in the web build', () => {
         vi.stubEnv('MODE', 'web');
     });
 
-    it('keeps only settings.json in the browser', async () => {
+    it('keeps only settings and the dashboard token in the browser', async () => {
         const { storage } = await import('../src/lib/storage');
         await storage.write('settings.json', '{}');
+        await storage.write('token.json', '{}');
         await storage.write('sync/api/index.json', '[]');
-        expect([...local.keys()]).toEqual(['lyf:settings.json']);
+        expect([...local.keys()]).toEqual(['lyf:settings.json', 'lyf:token.json']);
         expect(await storage.read('sync/api/index.json')).toBe('[]');
         expect(await storage.list('sync/api')).toEqual(['index.json']);
     });

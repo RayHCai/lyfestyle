@@ -70,14 +70,18 @@ produces the same installer under `apps/desktop/src-tauri/target/release/bundle`
 The same frontend also builds as a static site for phones and browsers:
 `pnpm --filter @lyfestyle/desktop build:web` writes `apps/desktop/dist`. Host that folder on any
 static host (Cloudflare Pages, Vercel, a Railway static service) with `index.html` as the fallback.
-It works only through the API: the first visit asks for the API URL and token, and only those are
-kept in the browser. Documents load from the API on every visit (no offline copy), and the agent
-features are hidden because no runner in the cloud takes chat turns. Add the site's origin to the API's
+It works only through the API, which is fixed when the site is built: set `VITE_API_URL` to the
+API's public URL for the build. Visitors sign in with `DASHBOARD_PASSWORD` (set it on the API),
+which buys a 30-day token from `POST /auth/login`; only that token and the name from Settings are
+kept in the browser, and the root `API_TOKEN` never reaches it. Changing the password signs every
+browser out. Documents load from the API on every visit (no offline copy), and the agent features
+are hidden because no runner in the cloud takes chat turns. Add the site's origin to the API's
 `CORS_ORIGINS`.
 
 On Vercel, import the repo and set Root Directory to `apps/desktop`; `apps/desktop/vercel.json`
-sets the install and build commands, the `dist` output and the `index.html` fallback. The site
-needs no environment variables.
+sets the install and build commands, the `dist` output and the `index.html` fallback. Set
+`VITE_API_URL` in the project's environment variables; it is read at build time, so redeploy after
+changing it.
 
 ## Runner on Railway
 

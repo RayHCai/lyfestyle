@@ -55,14 +55,14 @@ const disk = {
     dir: (): Promise<string> => (isTauri ? call<string>('storage_dir') : browser.dir()),
 };
 
-/** The one file the web build keeps between visits: the API connection. */
-const SETTINGS = 'settings.json';
+/** The files the web build keeps between visits: settings and the dashboard token (`web.ts`). */
+const KEPT = new Set(['settings.json', 'token.json']);
 
 /** Screenshot mode's writes, by key (null: deleted), once `keepInMemory` is on. The web build
  *  starts with it on and never reads other keys from disk, so nothing is cached offline. */
 let memory: Map<string, string | null> | null = isWeb ? new Map() : null;
 
-const inMemory = (key: string) => !!memory && !(isWeb && key === SETTINGS);
+const inMemory = (key: string) => !!memory && !(isWeb && KEPT.has(key));
 
 /** From now on writes stay in memory, over what is on disk, until the page reloads. Screenshot
  *  mode turns this on so seeding and pointing at a preview API never change the real data. */
@@ -74,7 +74,7 @@ export const storage = {
     read: async (key: string): Promise<string | null> =>
         memory?.has(key) && inMemory(key)
             ? (memory.get(key) ?? null)
-            : isWeb && key !== SETTINGS
+            : isWeb && !KEPT.has(key)
               ? null
               : disk.read(key),
     write: async (key: string, value: string): Promise<void> => {

@@ -24,6 +24,11 @@ export interface CoreSlice {
     load: () => Promise<void>;
     /** API mode: re-fetch the lists and sync documents. Keeps in-flight streams and loaded transcripts. */
     refresh: () => Promise<void>;
+    /** The web build: trade the dashboard password for a token, then load from the API. Throws
+     *  when the API refuses it. */
+    signIn: (password: string) => Promise<void>;
+    /** The web build: forget the token and go back to the password. */
+    signOut: () => Promise<void>;
 }
 
 /** `settings.ts` */

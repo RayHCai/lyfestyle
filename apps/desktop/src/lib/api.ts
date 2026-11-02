@@ -283,7 +283,8 @@ export class Api {
     }
 
     private async req<T>(method: string, path: string, body?: unknown): Promise<T> {
-        const headers: Record<string, string> = { authorization: `Bearer ${this.token}` };
+        const headers: Record<string, string> = {};
+        if (this.token) headers.authorization = `Bearer ${this.token}`;
         const init: RequestInit = { method, headers };
         if (body !== undefined) {
             headers['content-type'] = 'application/json';
@@ -314,6 +315,12 @@ export class Api {
             cursor = page.nextCursor;
         } while (cursor && out.length < max);
         return out;
+    }
+
+    /** `POST /auth/login`, the one route that needs no token: the password buys a dashboard
+     *  token. */
+    login(password: string) {
+        return this.req<{ token: string }>('POST', '/auth/login', { password });
     }
 
     listConversations() {
