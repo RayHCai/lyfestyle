@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { HTTPException } from 'hono/http-exception';
 import { conversationsRoutes, runsRoutes, usageRoutes } from './agent/routes.js';
+import { authRoutes, PUBLIC_AUTH_PATHS } from './auth/routes.js';
 import { automationsRoutes } from './automations/routes.js';
 import { integrationsRoutes } from './integrations/routes.js';
 import { safeEqual } from './lib/crypto.js';
@@ -17,7 +18,7 @@ import type { CallerEnv } from './tools/registry.js';
 import { mcpRoutes, toolsRoutes } from './tools/routes.js';
 
 /** Reached without a bearer token: other sites cannot carry one. */
-const PUBLIC_PATHS = new Set(['/health', ...PUBLIC_METRICS_PATHS]);
+const PUBLIC_PATHS = new Set(['/health', ...PUBLIC_METRICS_PATHS, ...PUBLIC_AUTH_PATHS]);
 
 /**
  * What a run's agent token reaches: the tools, as MCP or plain HTTP. Never `/agent/config` (other
@@ -66,13 +67,21 @@ export function createApp(services: Services) {
         PUBLIC_METRICS_PATHS.includes(c.req.path) ? collectCors(c, next) : appCors(c, next),
     );
 
-    // The root API_TOKEN reaches everything. A run's agent token (minted at claim) reaches only
+    // The root API_TOKEN reaches everything. A dashboard token (bought with the password) reaches
+    // everything but the harness's secrets. A run's agent token (minted at claim) reaches only
     // the tools, and only while that run is running.
     app.use('*', async (c, next) => {
         if (PUBLIC_PATHS.has(c.req.path)) return next();
         const token = /^bearer\s+(\S+)\s*$/i.exec(c.req.header('authorization') ?? '')?.[1];
         if (!token) throw unauthorized();
         if (safeEqual(token, config.apiToken)) {
+            c.set('caller', { run: null });
+            return next();
+        }
+        if (services.auth.authorize(token)) {
+            if (c.req.path === '/agent/config') {
+                throw forbidden('A dashboard token cannot read /agent/config');
+            }
             c.set('caller', { run: null });
             return next();
         }
@@ -121,6 +130,7 @@ export function createApp(services: Services) {
         .route('/', groups.notifications)
         .route('/', groups.usage)
         .route('/', groups.metrics)
+        .route('/', groups.auth)
         .route('/', groups.integrations)
         .route('/', groups['mcp-servers'])
         .route('/', groups.agent)
@@ -141,6 +151,7 @@ function routeGroups(services: Services) {
         notifications: notificationsRoutes(services),
         usage: usageRoutes(services),
         metrics: metricsRoutes(services),
+        auth: authRoutes(services),
         integrations: integrationsRoutes(services),
         'mcp-servers': mcpServersRoutes(services),
         agent: agentRoutes(services),

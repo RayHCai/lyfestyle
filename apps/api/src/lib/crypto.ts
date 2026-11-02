@@ -13,11 +13,14 @@ export interface SecretBox {
     open<T>(sealed: string): T;
     sign(payload: object, ttlMs: number): string;
     verify<T>(token: string): T | null;
+    /** A keyed hash of `value`, stable across restarts; without the key it says nothing about it. */
+    digest(value: string): string;
 }
 
 export function createSecretBox(masterKey: Buffer): SecretBox {
     const encKey = derive(masterKey, 'lyfestyle:secrets');
     const macKey = derive(masterKey, 'lyfestyle:tokens');
+    const digestKey = derive(masterKey, 'lyfestyle:digests');
 
     return {
         seal(value) {
@@ -61,6 +64,10 @@ export function createSecretBox(masterKey: Buffer): SecretBox {
                 exp: number;
             };
             return payload.exp > Date.now() ? (payload as T) : null;
+        },
+
+        digest(value) {
+            return mac(digestKey, value).toString('base64url');
         },
     };
 }

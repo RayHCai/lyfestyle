@@ -31,6 +31,9 @@ const schema = z.object({
         .positive()
         .default(15 * 60_000),
     NOTIFY_EMAIL: optional.pipe(z.email().optional()),
+    DASHBOARD_PASSWORD: optional.pipe(
+        z.string().min(12, 'DASHBOARD_PASSWORD must be at least 12 characters').optional(),
+    ),
 });
 
 export interface Config {
@@ -53,6 +56,8 @@ export interface Config {
     automationTimeoutMs: number;
     /** Where `ctx.email` sends when the code names no recipient. */
     notifyEmail: string | undefined;
+    /** What `POST /auth/login` trades for a session token; unset turns password sign-in off. */
+    dashboardPassword: string | undefined;
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -87,6 +92,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
         runBudgetUsd: e.RUN_BUDGET_USD,
         automationTimeoutMs: e.AUTOMATION_TIMEOUT_MS,
         notifyEmail: e.NOTIFY_EMAIL,
+        dashboardPassword: e.DASHBOARD_PASSWORD,
     };
 }
 

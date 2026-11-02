@@ -1,6 +1,7 @@
 import { createConversationsService } from './agent/conversations.js';
 import { createRunsService } from './agent/runs.js';
 import { createUsageService } from './agent/usage.js';
+import { createAuthService } from './auth/service.js';
 import { createAutomationsService } from './automations/service.js';
 import type { Config } from './config.js';
 import type { Db } from './db/client.js';
@@ -45,6 +46,7 @@ export function createServices(deps: Deps) {
     const notifications = createNotificationsService(db, now);
     const usage = createUsageService(db);
     const metrics = createMetricsService({ db, now, config });
+    const auth = createAuthService({ config, secrets, now });
 
     const store = createIntegrationStore(db, secrets, now);
     const canvas = createCanvas({ store, fetch: deps.fetch });
@@ -87,6 +89,7 @@ export function createServices(deps: Deps) {
         notifications,
         usage,
         metrics,
+        auth,
         integrations,
         canvas,
         resend,

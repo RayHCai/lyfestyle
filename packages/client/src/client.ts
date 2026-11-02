@@ -28,6 +28,7 @@ const GROUPS = {
     notifications: true,
     usage: true,
     metrics: true,
+    auth: true,
     integrations: true,
     'mcp-servers': true,
     agent: true,

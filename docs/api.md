@@ -1,9 +1,10 @@
 # Lyfestyle API
 
-Every route except `/health` and the two public metrics routes needs `Authorization: Bearer <token>`
-(scheme case-insensitive). `API_TOKEN` reaches every route. The `agentToken` from `POST /runs/claim`
-reaches only `/mcp`, `GET /tools` and `POST /tools/:name`, and only while its run is `running`: 401
-afterwards, 403 on any other route.
+Every route except `/health`, `POST /auth/login` and the two public metrics routes needs
+`Authorization: Bearer <token>` (scheme case-insensitive). `API_TOKEN` reaches every route. A
+dashboard token from `POST /auth/login` reaches every route but `/agent/config` (403). The
+`agentToken` from `POST /runs/claim` reaches only `/mcp`, `GET /tools` and `POST /tools/:name`, and
+only while its run is `running`: 401 afterwards, 403 on any other route.
 
 Bodies are JSON. Errors are `{ "error": { "code", "message", "details"? } }`, with codes
 `invalid_request` (400, including a malformed JSON body; `details` lists failing fields),
@@ -28,6 +29,12 @@ const board = await unwrap(api.todos.board.$get({ query: { today: '2026-10-26' }
 ```
 
 Every call is typed from the server's own routes; `unwrap` throws `ApiRequestError` on non-2xx.
+
+## Sign-in
+
+| Method & path      | Does                                                                                                                                                                                                                                                                |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /auth/login` | `{ password }` → `{ token }`, a dashboard token for the web build, valid 30 days. 401 for a wrong password, 403 while `DASHBOARD_PASSWORD` is unset, 429 after 5 attempts in a minute (from anyone). Setting a new `DASHBOARD_PASSWORD` ends every dashboard token. |
 
 ## Pages
 

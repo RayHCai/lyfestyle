@@ -46,6 +46,13 @@ describe('SecretBox', () => {
         expect(createSecretBox(Buffer.alloc(32, 2)).verify(token)).toBeNull();
     });
 
+    it('digests with its own key', () => {
+        expect(box.digest('value')).toBe(box.digest('value'));
+        expect(box.digest('value')).not.toBe(box.digest('other'));
+        expect(box.digest('value')).not.toContain('value');
+        expect(createSecretBox(Buffer.alloc(32, 2)).digest('value')).not.toBe(box.digest('value'));
+    });
+
     it('compares strings of any length', () => {
         expect(safeEqual('same-token', 'same-token')).toBe(true);
         expect(safeEqual('same-token', 'same-tokem')).toBe(false);
@@ -92,6 +99,9 @@ describe('loadConfig', () => {
         expect(() => loadConfig({ ...env, METRICS_RETENTION_DAYS: '-1' })).toThrow(
             'METRICS_RETENTION_DAYS',
         );
+        expect(() => loadConfig({ ...env, DASHBOARD_PASSWORD: 'too short' })).toThrow(
+            'DASHBOARD_PASSWORD must be at least 12 characters',
+        );
     });
 
     it('fills in defaults', () => {
@@ -101,6 +111,7 @@ describe('loadConfig', () => {
             metricsOrigins: '*',
             metricsRetentionDays: 365,
             resend: undefined,
+            dashboardPassword: undefined,
         });
     });
 });

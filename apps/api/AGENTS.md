@@ -29,7 +29,7 @@ and [docs/integrations.md](../../docs/integrations.md).
   Exports `RouteGroups`/`AppType`, which `@lyfestyle/client` types itself from.
 - `src/services.ts` `createServices(deps)`: the one place services are constructed and wired.
 - `src/config.ts` zod-parsed env into `Config`. New env vars go here (and in `.env.example`).
-- `src/<domain>/routes.ts` + `service.ts`: `pages/` (+ `sync-routes.ts`), `todos/` (todos and
+- `src/<domain>/routes.ts` + `service.ts`: `auth/` (dashboard sign-in), `pages/` (+ `sync-routes.ts`), `todos/` (todos and
   goals), `agent/` (conversations, runs, usage), `automations/` (`service.ts` facade and scheduling,
   `deploys.ts`, `executor.ts`, `queries.ts`, the `ctx` helper manifest in `helpers.ts`, the child
   process in `sandbox.ts`, `schedule.ts`, the agent-facing `guide.ts`),
@@ -70,8 +70,11 @@ same key to `GROUPS` in `packages/client/src/client.ts` (a `satisfies` check fai
   404, P2002/P2003 → 409 (`onDuplicate(message)` gives a friendlier 409); anything else becomes a
   logged 500.
 - Every route needs the bearer token except `PUBLIC_PATHS` in `app.ts` (`/health`,
-  `/metrics/collect`, `/metrics/script.js`). Add to that set deliberately. The root `API_TOKEN`
-  reaches everything. A run's agent token (minted by `claim`, checked by `runs.authorize`) reaches
+  `/metrics/collect`, `/metrics/script.js`, `/auth/login`). Add to that set deliberately. The root
+  `API_TOKEN` reaches everything. A dashboard token (`auth/service.ts`: `POST /auth/login` trades
+  `DASHBOARD_PASSWORD` for it, at most 5 attempts a minute) reaches everything but `/agent/config`;
+  it is signed, not stored, and carries a digest of the password, so a new password ends them all.
+  A run's agent token (minted by `claim`, checked by `runs.authorize`) reaches
   only what `agentMay` in `app.ts` allows (`/mcp`, `GET /tools`, `POST /tools/:name`), and only
   while the run is running. Never widen it to routes that read secrets or approve deploys.
 - Tools are defined once with `defineTool` in `tools/definitions.ts` and reach both `/mcp` and

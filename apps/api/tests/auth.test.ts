@@ -2,7 +2,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createApp } from '../src/app.js';
+import { createApp, type AppType } from '../src/app.js';
+import { createAuthService } from '../src/auth/service.js';
 import type { Db } from '../src/db/client.js';
 import { createTestContext, TEST_TOKEN, TEST_URL, type TestContext } from '../src/testing.js';
 
@@ -12,8 +13,8 @@ beforeAll(async () => {
 });
 afterAll(() => t.close());
 
-function send(method: string, path: string, token?: string, body?: string) {
-    return t.app.request(path, {
+function send(method: string, path: string, token?: string, body?: string, app: AppType = t.app) {
+    return app.request(path, {
         method,
         headers: {
             ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
@@ -136,6 +137,75 @@ describe('agent tokens', () => {
         expect((await send('GET', '/tools', forged)).status).toBe(401);
         expect((await send('GET', '/tools', `${token}x`)).status).toBe(401);
         await t.call('POST', `/runs/${run.id}/complete`, { status: 'succeeded' });
+    });
+});
+
+const PASSWORD = 'correct horse battery';
+
+/** The API with password sign-in set to `password` (null: off), and its own attempt budget. */
+function dashboard(password: string | null = PASSWORD) {
+    const config = { ...t.config, dashboardPassword: password ?? undefined };
+    const auth = createAuthService({ config, secrets: t.services.secrets, now: () => new Date() });
+    return createApp({ ...t.services, config, auth });
+}
+
+const login = (app: AppType, password: string) =>
+    send('POST', '/auth/login', undefined, JSON.stringify({ password }), app);
+
+describe('dashboard tokens', () => {
+    it('trade the password for a token that reaches all but the harness config', async () => {
+        const app = dashboard();
+        const res = await login(app, PASSWORD);
+        expect(res.status).toBe(200);
+        const { token } = await res.json();
+        expect(token).toEqual(expect.any(String));
+        expect(token).not.toBe(TEST_TOKEN);
+
+        for (const [method, path] of ROUTES) {
+            if (path === '/agent/config') continue;
+            const body = method === 'GET' ? undefined : '{}';
+            const status = (await send(method, path, token, body, app)).status;
+            expect([method, path, [401, 403].includes(status)]).toEqual([method, path, false]);
+        }
+        const config = await send('GET', '/agent/config', token, undefined, app);
+        expect(config.status).toBe(403);
+        expect((await config.json()).error.code).toBe('forbidden');
+    });
+
+    it('refuse a wrong password, and every attempt once there were too many', async () => {
+        const app = dashboard();
+        const wrong = await login(app, 'correct horse batter');
+        expect(wrong.status).toBe(401);
+        expect((await wrong.json()).error.code).toBe('unauthorized');
+        for (let i = 0; i < 4; i++) expect((await login(app, 'guess')).status).toBe(401);
+        const limited = await login(app, PASSWORD);
+        expect(limited.status).toBe(429);
+        expect((await limited.json()).error.code).toBe('rate_limited');
+    });
+
+    it('validate the body', async () => {
+        const res = await send('POST', '/auth/login', undefined, '{}', dashboard());
+        expect(res.status).toBe(400);
+        expect((await res.json()).error.code).toBe('invalid_request');
+    });
+
+    it('are off while DASHBOARD_PASSWORD is unset', async () => {
+        const { token } = await (await login(dashboard(), PASSWORD)).json();
+        const off = dashboard(null);
+        expect((await login(off, PASSWORD)).status).toBe(403);
+        expect((await send('GET', '/pages', token, undefined, off)).status).toBe(401);
+    });
+
+    it('end when the password changes, they expire, or they are altered', async () => {
+        const { token } = await (await login(dashboard(), PASSWORD)).json();
+        expect((await send('GET', '/pages', token, undefined, dashboard())).status).toBe(200);
+        const changed = dashboard('a brand new password');
+        expect((await send('GET', '/pages', token, undefined, changed)).status).toBe(401);
+
+        const generation = t.services.secrets.digest(`dashboard:${PASSWORD}`);
+        const expired = t.services.secrets.sign({ kind: 'dashboard', generation }, -1);
+        expect((await send('GET', '/pages', expired, undefined, dashboard())).status).toBe(401);
+        expect((await send('GET', '/pages', `${token}x`, undefined, dashboard())).status).toBe(401);
     });
 });
 
