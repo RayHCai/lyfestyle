@@ -24,7 +24,8 @@ Env (`src/env.ts`): `LYFESTYLE_API_URL` (default `http://localhost:$PORT`), `LYF
 (falls back to `API_TOKEN`), `RUNNER_ID` (default the hostname), `RUNNER_CONCURRENCY`,
 `RUNNER_KINDS` (`chat`, `automation`, comma-separated; sent as the claim's `kinds`; empty takes both),
 `AGENT_HARNESS` (`claude-code` | `command`; unset picks `command` when only
-`AGENT_HARNESS_COMMAND` is set), `AGENT_HARNESS_COMMAND`, `AGENT_MODEL`, `AGENT_TOOLS` (comma list
+`AGENT_HARNESS_COMMAND` is set), `AGENT_HARNESS_COMMAND`, `AGENT_MODEL` (the default; a run's own
+`model`, from `ctx.agent`, wins in `ClaudeCodeHarness`), `AGENT_TOOLS` (comma list
 or `none`), `AGENT_CONNECTOR_TOOLS` (claude.ai connector tool names, or `none`), `AGENT_CWD`
 (default `~/.lyfestyle/agent`), `AGENT_MAX_TURNS`, `AGENT_MAX_BUDGET_USD` (an optional lower cap
 on each run's `budgetUsd` from the API; `0` is an error, leave it empty for none),

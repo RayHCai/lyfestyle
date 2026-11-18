@@ -30,6 +30,8 @@ interface NewRun {
     automationRunId?: string | null;
     /** Defaults to the API's `RUN_BUDGET_USD`, and never exceeds it. */
     budgetUsd?: number;
+    /** The Claude model the runner should use; unset leaves it to the runner's `AGENT_MODEL`. */
+    model?: string | undefined;
 }
 
 interface RunFilter {
@@ -306,6 +308,7 @@ export function createRunsService(deps: {
                     conversationId: input.conversationId ?? null,
                     automationRunId: input.automationRunId ?? null,
                     budgetUsd: Math.min(input.budgetUsd ?? deps.budgetUsd, deps.budgetUsd),
+                    model: input.model ?? null,
                     createdAt: now(),
                 },
             });

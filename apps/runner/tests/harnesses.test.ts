@@ -285,6 +285,19 @@ describe('ClaudeCodeHarness', () => {
     }
     const seen = (): Seen => ({ calls: 0 });
 
+    it('uses the model the run asked for over its own', async () => {
+        const s = seen();
+        const harness = new ClaudeCodeHarness({
+            cwd: '/agent',
+            model: 'claude-opus-5-5',
+            query: fakeQuery(s, [init, result(1)], [init, result(1)]),
+        });
+        await harness.run(input({ model: 'sonnet' }));
+        expect(s.options?.model).toBe('sonnet');
+        await harness.run(input());
+        expect(s.options?.model).toBe('claude-opus-5-5');
+    });
+
     it('locks Claude Code down to the app’s tools and its own settings', async () => {
         const s = seen();
         const harness = new ClaudeCodeHarness({

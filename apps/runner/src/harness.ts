@@ -34,6 +34,8 @@ export interface HarnessInput {
      * run once a usage report shows it over budget, and a stream-json agent reports usage at the end.
      */
     budgetUsd: number;
+    /** The model the run asked for (automation code's `ctx.agent`); it wins over `AGENT_MODEL`. */
+    model?: string | undefined;
     /** The API's own tool server first (with the run's agent token), then every enabled server. */
     mcpServers: McpServerSpec[];
     /**

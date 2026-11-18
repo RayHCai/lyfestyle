@@ -174,6 +174,8 @@ model Run {
   automationRunId String?       @map("automation_run_id") @db.Uuid
   /// Usage beyond this many dollars cancels the run.
   budgetUsd       Float         @default(5) @map("budget_usd")
+  /// The Claude model to run with, as automation code asked; null leaves it to the runner.
+  model           String?
   runnerId        String?       @map("runner_id")
   harness         String?
   output          String?

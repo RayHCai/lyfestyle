@@ -311,6 +311,7 @@ export class Runner {
                 automation: claimed.automation,
                 soul: (await this.#o.soul?.()) ?? '',
                 budgetUsd: run.budgetUsd,
+                model: run.model ?? undefined,
                 mcpServers: await this.#mcpServers(claimed.agentToken),
                 signal: abort.signal,
                 emit: (event) => reporter.push(event),

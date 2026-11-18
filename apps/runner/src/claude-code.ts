@@ -357,6 +357,7 @@ export class ClaudeCodeHarness implements Harness {
         const tools = opts.tools ?? DEFAULT_TOOLS;
         const connectorTools = opts.connectorTools ?? DEFAULT_CONNECTOR_TOOLS;
         const mcpServers = mcpConfig(input.mcpServers);
+        const model = input.model || opts.model;
         const options: Options = {
             abortController,
             cwd: opts.cwd,
@@ -375,7 +376,7 @@ export class ClaudeCodeHarness implements Harness {
             systemPrompt: systemPrompt(input),
             env: agentEnv({ CLAUDE_AGENT_SDK_CLIENT_APP: CLIENT_APP }),
             ...(resume ? { resume: resume.sessionId } : {}),
-            ...(opts.model ? { model: opts.model } : {}),
+            ...(model ? { model } : {}),
             ...(opts.maxTurns ? { maxTurns: opts.maxTurns } : {}),
             // Claude Code checks this against what the process itself spent, not the session total
             // a resumed transcript restores (see `total_cost_usd` in the SDK's sdk.d.ts), so the

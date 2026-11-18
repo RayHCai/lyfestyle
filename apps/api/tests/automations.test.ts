@@ -398,6 +398,25 @@ describe('agent runs', slow, () => {
         await t.call('DELETE', `/automations/${automation.id}`);
     });
 
+    it('passes the model a call asks for to its run, and refuses one that is not a name', async () => {
+        const automation = await deploy(`
+            export default async (ctx) => {
+                const bad = await ctx.agent('X', { model: 'sonnet --dangerously' }).catch((e) => e.message);
+                return [bad, await ctx.agent('Summarise', { model: 'haiku' })];
+            };
+        `);
+        await t.call('POST', `/automations/${automation.id}/trigger`);
+        const { run } = (await t.call('POST', '/runs/claim', { ...runner, waitMs: 2000 })).body;
+        expect(run).toMatchObject({ prompt: 'Summarise', model: 'haiku' });
+        await t.call('POST', `/runs/${run.id}/complete`, { status: 'succeeded', output: 'ok' });
+        await t.services.automations.idle();
+        const done = (await t.call('GET', `/automations/${automation.id}`)).body.recentRuns[0];
+        const [bad, ok] = JSON.parse(done.output);
+        expect(bad).toContain('Not a model name');
+        expect(ok).toBe('ok');
+        await t.call('DELETE', `/automations/${automation.id}`);
+    });
+
     it('splits the budget between calls made in parallel', async () => {
         const automation = await deploy(`
             export default async (ctx) => {

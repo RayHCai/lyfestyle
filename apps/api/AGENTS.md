@@ -109,6 +109,9 @@ same key to `GROUPS` in `packages/client/src/client.ts` (a `satisfies` check fai
   enqueued under a per-execution lock with the budget less what finished siblings spent and
   unfinished ones hold, and `report` also sums every agent run of an automation run and, past
   `RUN_BUDGET_USD`, cancels the siblings.
+- Models: `ctx.agent(prompt, { model })` stores the model on its run (`Run.model`, validated as a
+  plain model name since it reaches Claude Code's command line); the runner prefers it to its own
+  `AGENT_MODEL`. Chat runs leave it null.
 - Runs: `runs.enqueue(tx, ...)` inside the caller's transaction, then `runs.announce(...)` after it
   commits. Run events are append-only rows; status events are written only by the API. Claims are
   serialised with a Postgres advisory lock so one conversation never runs two turns at once. SSE

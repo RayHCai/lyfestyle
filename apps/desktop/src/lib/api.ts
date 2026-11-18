@@ -29,6 +29,8 @@ export interface ApiRun {
     automationRunId: string | null;
     /** The most this run may spend, in USD; the API stops it beyond that. */
     budgetUsd: number;
+    /** The model automation code asked for; the desktop runner takes chat runs, which have none. */
+    model: string | null;
     output: string | null;
     error: string | null;
     createdAt: string;

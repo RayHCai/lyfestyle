@@ -20,6 +20,7 @@ const claim = (patch: Partial<Claim> = {}): Claim => ({
         conversationId: 'c1',
         automationRunId: null,
         budgetUsd: 5,
+        model: null,
         output: null,
         error: null,
         createdAt: '',

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { AutomationLog, Prisma, Row } from '../db/client.js';
 import { badRequest } from '../lib/errors.js';
-import { HELPERS, plain, type Execution, type HelperDeps } from './helpers.js';
+import { HELPERS, plain, type AgentOptions, type Execution, type HelperDeps } from './helpers.js';
 import { runInSandbox, SandboxError } from './sandbox.js';
 
 type Automation = Row<'automation'>;
@@ -86,7 +86,7 @@ export function createExecutor(deps: ExecutorDeps) {
         run: AutomationRun,
         signal: AbortSignal,
         prompt: string,
-        budgetUsd: number | undefined,
+        { budgetUsd, model }: AgentOptions,
     ) {
         if (signal.aborted) throw new Error('The run is over');
         const left = await budgetLeft(run.id);
@@ -101,6 +101,7 @@ export function createExecutor(deps: ExecutorDeps) {
                 prompt,
                 automationRunId: run.id,
                 budgetUsd: Math.min(budgetUsd ?? left, left),
+                model,
             }),
         );
         runs.announce([queued]);
@@ -144,11 +145,9 @@ export function createExecutor(deps: ExecutorDeps) {
             run,
             signal: abort.signal,
             log,
-            enqueueAgent(prompt, budgetUsd) {
+            enqueueAgent(prompt, options) {
                 // One at a time, so calls made in parallel each see what the earlier ones hold.
-                const queued = budget.then(() =>
-                    enqueueAgent(run, abort.signal, prompt, budgetUsd),
-                );
+                const queued = budget.then(() => enqueueAgent(run, abort.signal, prompt, options));
                 budget = queued.catch(() => {});
                 // Tracked before anyone awaits it, so the cleanup below cannot miss the run.
                 enqueues.add(budget);

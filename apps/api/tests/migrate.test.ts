@@ -58,6 +58,7 @@ describe('migrations', { timeout: 30_000 }, () => {
                 '0_init',
                 '20261027194110_automations',
                 '20261028143912_review_fixes',
+                '20261118205456_add_run_model',
             ]);
             // Jobs carry over as automations that hand their prompt to the agent.
             expect(await db.automation.findMany({ select: { name: true, code: true } })).toEqual([

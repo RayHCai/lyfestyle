@@ -27,7 +27,13 @@ export interface Execution {
     signal: AbortSignal;
     log(level: AutomationLog['level'], message: string): void;
     /** Queues an agent run with what is left of the execution's shared budget. */
-    enqueueAgent(prompt: string, budgetUsd: number | undefined): Promise<Run>;
+    enqueueAgent(prompt: string, options: AgentOptions): Promise<Run>;
+}
+
+export interface AgentOptions {
+    budgetUsd?: number | undefined;
+    /** A Claude model alias or id for the runner to use instead of its default. */
+    model?: string | undefined;
 }
 
 export interface GuideLimits {
@@ -100,12 +106,25 @@ export const HELPERS: readonly Helper[] = [
         name: 'agent',
         args: z.tuple([
             z.string().trim().min(1).max(100_000),
-            z.object({ budgetUsd: z.number().positive().optional() }).nullish(),
+            z
+                .object({
+                    budgetUsd: z.number().positive().optional(),
+                    // An alias (`sonnet`) or a full id; it ends up on Claude Code's command line.
+                    model: z
+                        .string()
+                        .trim()
+                        .regex(/^[A-Za-z0-9][\w.:[\]-]{0,99}$/, 'Not a model name')
+                        .optional(),
+                })
+                .nullish(),
         ]),
         doc: ({ budgetUsd }) =>
-            `ctx.agent(prompt, { budgetUsd? }): run the Claude agent (with all Lyfestyle tools and the user's connectors) on the user's runner and wait for its final text. Use it only for work that needs judgement or the user's Gmail/Calendar; it is slow and costs money. All agent calls in one run share a $${budgetUsd.toFixed(2)} budget: each call gets what earlier calls have not spent or still hold (calls made in parallel split it), and a call fails once nothing is left.`,
+            `ctx.agent(prompt, { budgetUsd?, model? }): run the Claude agent (with all Lyfestyle tools and the user's connectors) on the user's runner and wait for its final text. Use it only for work that needs judgement or the user's Gmail/Calendar; it is slow and costs money. All agent calls in one run share a $${budgetUsd.toFixed(2)} budget: each call gets what earlier calls have not spent or still hold (calls made in parallel split it), and a call fails once nothing is left. \`model\` picks the Claude model for that call: an alias ('haiku', 'sonnet', 'opus') or a full model id; leave it out for the runner's default. A cheaper model suits simple summaries.`,
         async run([prompt, options], x, deps) {
-            const queued = await x.enqueueAgent(prompt, options?.budgetUsd);
+            const queued = await x.enqueueAgent(prompt, {
+                budgetUsd: options?.budgetUsd,
+                model: options?.model,
+            });
             x.log('info', `Started agent run ${queued.id}`);
             const finished = await deps.runs.waitFor(queued.id, x.signal);
             if (!finished) throw new Error('Stopped while waiting for the agent');
