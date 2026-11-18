@@ -7,6 +7,7 @@
  * an API run the in-app runner holds go to `runner.ts` instead.
  */
 import { activeHarness, fromCodex, harnessCommand } from './harness';
+import { clearAgent, handleControl } from './permissions';
 import { handleRunEvent, ownsRun } from './runner';
 import { call, isTauri, onEvent } from './tauri';
 import { useData } from '../store/data';
@@ -144,6 +145,7 @@ function handle(p: AgentEventPayload) {
         return;
     }
     if (p.kind === 'exit') {
+        clearAgent(id);
         finish(id, Number(p.line));
         return;
     }
@@ -161,6 +163,7 @@ function handle(p: AgentEventPayload) {
         );
         return;
     }
+    if (handleControl(id, id, obj)) return;
     for (const l of fromCodex(obj, data.settings.model || 'codex') ?? [obj]) handleLine(id, l);
 }
 

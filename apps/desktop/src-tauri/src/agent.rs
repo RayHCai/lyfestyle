@@ -13,6 +13,12 @@
 //! todo app's when Settings has its URL. Claude Code receives them as
 //! `--mcp-config`; a custom command finds the same file in `LYFESTYLE_MCP_CONFIG`. Claude Code also
 //! gets the user's SOUL.md (`soul.rs`) appended to its system prompt.
+//!
+//! Claude Code reads the prompt as a stream-json user message and keeps stdin open for the turn:
+//! with `--permission-prompt-tool stdio` it asks for any permission its rules do not settle as a
+//! `control_request` line on stdout, and waits for the `control_response` that `agent_control`
+//! writes back (`lib/permissions.ts` shows the prompt). Its stdin closes at the `result` line,
+//! which ends the process.
 
 use crate::env_var;
 use serde::{Deserialize, Serialize};
@@ -20,7 +26,7 @@ use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
@@ -36,6 +42,9 @@ const SERVER_SECRETS: [&str; 3] = ["ENCRYPTION_KEY", "DATABASE_URL", "RESEND_API
 const API_TOKENS: [&str; 2] = ["API_TOKEN", "LYFESTYLE_API_TOKEN"];
 
 type Children = Arc<Mutex<HashMap<String, Running>>>;
+/// The agent's stdin while it may still read from it: the prompt writer and `agent_control` share
+/// it, and closing it (taking it out) tells Claude Code the turn has no more input.
+type Stdin = Arc<Mutex<Option<ChildStdin>>>;
 
 #[derive(Default)]
 pub struct AgentState {
@@ -49,6 +58,7 @@ pub struct AgentState {
 struct Running {
     spawn: u64,
     child: Child,
+    stdin: Stdin,
     superseded: Arc<AtomicBool>,
 }
 
@@ -65,6 +75,42 @@ impl AgentState {
 /// The map stays usable after a reader thread panics; nothing in it can be left half-updated.
 fn lock(children: &Children) -> MutexGuard<'_, HashMap<String, Running>> {
     children.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn lock_stdin(stdin: &Stdin) -> MutexGuard<'_, Option<ChildStdin>> {
+    stdin.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The prompt as the one stream-json user message of a Claude Code turn.
+fn user_line(prompt: &str) -> String {
+    let msg = serde_json::json!({
+        "type": "user",
+        "message": { "role": "user", "content": [{ "type": "text", "text": prompt }] },
+        "parent_tool_use_id": null,
+        "session_id": "",
+    });
+    format!("{msg}\n")
+}
+
+/// Whether a stdout line is Claude Code's `result`, the end of the turn. The substring check
+/// spares parsing every streamed delta.
+fn is_result(line: &str) -> bool {
+    line.contains("\"result\"")
+        && serde_json::from_str::<Value>(line)
+            .is_ok_and(|v| v.get("type").and_then(Value::as_str) == Some("result"))
+}
+
+/// The answer to control request `request_id`: `response` on success, else `error`.
+fn control_line(request_id: &str, response: Option<Value>, error: Option<String>) -> String {
+    let body = match error {
+        Some(error) => serde_json::json!({
+            "subtype": "error", "request_id": request_id, "error": error,
+        }),
+        None => serde_json::json!({
+            "subtype": "success", "request_id": request_id, "response": response.unwrap_or(Value::Null),
+        }),
+    };
+    format!("{}\n", serde_json::json!({ "type": "control_response", "response": body }))
 }
 
 /// Kill a child and everything under it. On Windows Claude Code runs under the npm shim's
@@ -399,10 +445,22 @@ pub fn agent_send(
         argv.push("-".into());
     } else {
         argv.extend(
-            ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]
-                .iter()
-                .map(|s| s.to_string()),
+            [
+                "-p",
+                "--input-format",
+                "stream-json",
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--include-partial-messages",
+                // Permission prompts come to the app over stdio instead of being denied.
+                "--permission-prompt-tool",
+                "stdio",
+            ]
+            .iter()
+            .map(|s| s.to_string()),
         );
+        prompt = user_line(&prompt);
         if let Some(model) = args.model.as_deref().filter(|m| !m.trim().is_empty()) {
             argv.push("--model".into());
             argv.push(model.to_string());
@@ -423,7 +481,7 @@ pub fn agent_send(
             argv.push("--append-system-prompt-file".into());
             argv.push(soul.to_string_lossy().into_owned());
         }
-        // Print mode cannot ask for permission, so the app's own servers are allowed up front.
+        // The app's own servers are allowed up front rather than asked about on every call.
         argv.push("--allowedTools".into());
         argv.push(mcp_servers.keys().map(|n| format!("mcp__{n}")).collect::<Vec<_>>().join(","));
         if let Some(sid) = &args.session_id {
@@ -459,11 +517,20 @@ pub fn agent_send(
 
     let conversation_id = args.conversation_id.clone();
 
-    if let Some(mut stdin) = child.stdin.take() {
+    let stdin: Stdin = Arc::new(Mutex::new(child.stdin.take()));
+    {
+        let stdin = stdin.clone();
         thread::spawn(move || {
-            let _ = stdin.write_all(prompt.as_bytes());
-            let _ = stdin.flush();
-            // Dropping stdin closes the pipe, which tells the CLI the prompt is complete.
+            let mut pipe = lock_stdin(&stdin);
+            if let Some(w) = pipe.as_mut() {
+                let _ = w.write_all(prompt.as_bytes());
+                let _ = w.flush();
+            }
+            // Closing stdin tells the CLI the prompt is complete. Claude Code keeps it open for
+            // permission answers until its `result` line.
+            if kind != Kind::ClaudeCode {
+                pipe.take();
+            }
         });
     }
     let stdout = child.stdout.take();
@@ -471,8 +538,10 @@ pub fn agent_send(
 
     let spawn = state.spawns.fetch_add(1, Ordering::Relaxed);
     let superseded = Arc::new(AtomicBool::new(false));
-    let previous = lock(&state.children)
-        .insert(conversation_id.clone(), Running { spawn, child, superseded: superseded.clone() });
+    let previous = lock(&state.children).insert(
+        conversation_id.clone(),
+        Running { spawn, child, stdin: stdin.clone(), superseded: superseded.clone() },
+    );
     if let Some(mut previous) = previous {
         previous.superseded.store(true, Ordering::Relaxed);
         // Its reader no longer finds it in the map, so reaping it falls to this send.
@@ -504,6 +573,9 @@ pub fn agent_send(
             for line in BufReader::new(out).lines().map_while(Result::ok) {
                 if superseded.load(Ordering::Relaxed) {
                     break;
+                }
+                if kind == Kind::ClaudeCode && is_result(&line) {
+                    lock_stdin(&stdin).take();
                 }
                 emit(&app2, &id, "line", line);
             }
@@ -539,9 +611,55 @@ pub fn agent_cancel(state: State<'_, AgentState>, conversation_id: String) -> Re
     Ok(())
 }
 
+#[derive(Deserialize)]
+pub struct ControlArgs {
+    pub conversation_id: String,
+    pub request_id: String,
+    pub response: Option<Value>,
+    pub error: Option<String>,
+}
+
+/// Answers a control request (a permission prompt) from the agent running for a conversation.
+#[tauri::command(async)]
+pub fn agent_control(state: State<'_, AgentState>, args: ControlArgs) -> Result<(), String> {
+    let gone = || "The agent is no longer running.".to_string();
+    let stdin = lock(&state.children).get(&args.conversation_id).map(|r| r.stdin.clone());
+    let stdin = stdin.ok_or_else(gone)?;
+    let mut pipe = lock_stdin(&stdin);
+    let w = pipe.as_mut().ok_or_else(gone)?;
+    w.write_all(control_line(&args.request_id, args.response, args.error).as_bytes())
+        .and_then(|()| w.flush())
+        .map_err(|e| format!("Could not answer the agent: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stream_json_lines() {
+        let user: Value = serde_json::from_str(user_line("hi\nthere").trim_end()).unwrap();
+        assert_eq!(user["type"], "user");
+        assert_eq!(user["message"]["content"][0]["text"], "hi\nthere");
+        assert!(user_line("x").ends_with('\n') && !user_line("x").trim_end().contains('\n'));
+
+        assert!(is_result(r#"{"type":"result","subtype":"success","result":"ok"}"#));
+        assert!(!is_result(r#"{"type":"assistant","message":{"content":"\"result\""}}"#));
+        assert!(!is_result("not json \"result\""));
+
+        let ok: Value = serde_json::from_str(
+            control_line("r1", Some(serde_json::json!({ "behavior": "allow" })), None).trim_end(),
+        )
+        .unwrap();
+        assert_eq!(ok["type"], "control_response");
+        assert_eq!(ok["response"]["subtype"], "success");
+        assert_eq!(ok["response"]["request_id"], "r1");
+        assert_eq!(ok["response"]["response"]["behavior"], "allow");
+        let err: Value =
+            serde_json::from_str(control_line("r2", None, Some("no".into())).trim_end()).unwrap();
+        assert_eq!(err["response"]["subtype"], "error");
+        assert_eq!(err["response"]["error"], "no");
+    }
 
     #[test]
     fn codex_mcp_args_keep_tokens_off_the_command_line() {

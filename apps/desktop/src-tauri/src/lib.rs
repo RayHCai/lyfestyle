@@ -68,6 +68,7 @@ pub fn run() {
             storage::storage_dir,
             agent::agent_send,
             agent::agent_cancel,
+            agent::agent_control,
             agent::agent_env,
             skills::skills_load,
             soul::soul_read,

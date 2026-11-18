@@ -3,11 +3,13 @@ import Composer from '../components/Composer';
 import CopyButton from '../components/CopyButton';
 import { DeployPrompt } from '../components/DeployCard';
 import Markdown from '../components/Markdown';
+import PermissionPrompt from '../components/PermissionPrompt';
 import { useQuoteSelection } from '../hooks/useQuoteSelection';
 import { useTypeToCompose } from '../hooks/useTypeToCompose';
 import { useApp } from '../store/app';
 import { useData } from '../store/data';
 import { canResend, cancel, openConversation, resend, sendMessage } from '../lib/agent';
+import { usePermissions, type PermissionRequest } from '../lib/permissions';
 import type { Message } from '../lib/types';
 
 const COMPOSER = '.conv-foot textarea';
@@ -99,6 +101,8 @@ interface MessageProps {
     streaming: boolean;
     canEdit: boolean;
     canRetry: boolean;
+    /** Tool calls the running turn waits on; only the last reply gets them. */
+    permissions?: PermissionRequest[] | undefined;
     onEdit: (messageId: string) => void;
     onRetry: (messageId: string) => void;
 }
@@ -110,6 +114,7 @@ const MessageView = memo(function MessageView({
     streaming,
     canEdit,
     canRetry,
+    permissions,
     onEdit,
     onRetry,
 }: MessageProps) {
@@ -158,6 +163,9 @@ const MessageView = memo(function MessageView({
             {m.deploys?.map((d) => (
                 <DeployPrompt key={d} id={d} />
             ))}
+            {permissions?.map((r) => (
+                <PermissionPrompt key={`${r.agent}:${r.requestId}`} request={r} />
+            ))}
             {m.error && <div className="err select-text">{m.error}</div>}
             {row}
         </div>
@@ -193,6 +201,7 @@ export default function ConversationPage({ id }: { id: string }) {
     const saveDraft = useApp((s) => s.setDraft);
     const setDraft = useCallback((text: string) => saveDraft(id, text), [id, saveDraft]);
     const [editing, setEditing] = useState<string | null>(null);
+    const permissions = usePermissions(id);
     const [picked, clearPicked] = useQuoteSelection('.thread', '.msg-edit');
     useTypeToCompose(COMPOSER);
 
@@ -206,6 +215,13 @@ export default function ConversationPage({ id }: { id: string }) {
         const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
         if (nearBottom || size < 400 || count < 3) el.scrollTop = el.scrollHeight;
     }, [size, count]);
+
+    // A tool call waiting on the user should not sit below the fold.
+    const asking = permissions.length;
+    useEffect(() => {
+        const el = scroller.current;
+        if (el && asking) el.scrollTop = el.scrollHeight;
+    }, [asking]);
 
     const onEdit = useCallback((messageId: string) => setEditing(messageId), []);
     const onRetry = useCallback(
@@ -228,6 +244,7 @@ export default function ConversationPage({ id }: { id: string }) {
     const streaming = !!c.streaming;
     const rewind = !streaming && canResend(c);
     const last = c.messages.length - 1;
+    const inReply = c.messages[last]?.role === 'assistant';
     const reply = () => {
         if (!picked) return;
         setDraft(quoteInto(draft, picked.text));
@@ -274,10 +291,18 @@ export default function ConversationPage({ id }: { id: string }) {
                                     i === last &&
                                     c.messages[i - 1]?.role === 'user'
                                 }
+                                permissions={i === last && inReply ? permissions : undefined}
                                 onEdit={onEdit}
                                 onRetry={onRetry}
                             />
                         ),
+                    )}
+                    {!inReply && asking > 0 && (
+                        <div className="msg assistant">
+                            {permissions.map((r) => (
+                                <PermissionPrompt key={`${r.agent}:${r.requestId}`} request={r} />
+                            ))}
+                        </div>
                     )}
                 </div>
             </div>

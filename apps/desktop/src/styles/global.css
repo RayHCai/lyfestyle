@@ -2048,6 +2048,38 @@ select {
     color: var(--ink);
 }
 
+/* Permission prompt: a tool call the agent waits on, under the reply it came from. */
+.perm {
+    margin: 10px 0 4px;
+    padding: 10px 0 12px;
+    border-top: var(--dash);
+    border-bottom: var(--dash);
+    animation: rise 0.3s var(--ease) both;
+}
+.perm-head {
+    display: flex;
+    align-items: baseline;
+    gap: 2ch;
+}
+.perm-head .tag {
+    color: var(--ink-strong);
+    font-size: 13px;
+    font-weight: 500;
+}
+.perm-head .tag::before {
+    content: '{';
+    color: var(--hair);
+}
+.perm-head .tag::after {
+    content: '}';
+    color: var(--hair);
+}
+.perm-note {
+    margin: 2px 0 0;
+    font-size: 12px;
+    color: var(--muted);
+}
+
 /* Timeline: a 24-hour day. Lanes are dashed baselines; a run is a short ink bar, a failed one
    red, a running one blinks in sakura; slots still ahead are hollow. */
 .tl {

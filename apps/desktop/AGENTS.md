@@ -178,10 +178,17 @@ Verify UI changes with `typecheck`, `test`, `lint:rust`, `test:rust` and screens
   session gets SOUL.md prepended to the prompt. A send with `mcp_servers` (an API run) writes them
   to `mcp-<run id>.json`, deleted when the process exits.
   With `LYFESTYLE_AGENT_COMMAND` (or the `command` harness) set, it passes `--session <id>`; for Claude Code it runs
-  `claude -p --output-format stream-json --verbose --include-partial-messages [--model]
-[--effort] --mcp-config <data>/mcp.json --allowedTools mcp__lyfestyle[,mcp__todo] [--resume <id>]`.
-  Every send rewrites `mcp.json` and sets `LYFESTYLE_MCP_CONFIG` to it for either kind of command. Prompt goes on stdin; stdout/stderr come back as `agent-event`
-  (`kind: line | stderr | exit`). On Windows cancel kills the process tree with `taskkill /T`.
+  `claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages
+--permission-prompt-tool stdio [--model] [--effort] --mcp-config <data>/mcp.json --allowedTools mcp__lyfestyle[,mcp__todo] [--resume <id>]`.
+  Every send rewrites `mcp.json` and sets `LYFESTYLE_MCP_CONFIG` to it for either kind of command. Prompt goes on stdin
+  (for Claude Code as one stream-json user message); stdout/stderr come back as `agent-event`
+  (`kind: line | stderr | exit`). Claude Code's stdin stays open until its `result` line so it can
+  ask for permissions: a `control_request` (`can_use_tool`) line goes to `lib/permissions.ts`
+  (from `agent.ts`, or `runner.ts` for an API run, which also logs `Asked to use <tool>`), shows as
+  `components/PermissionPrompt.tsx` under the conversation's last reply, and `agent_control`
+  writes the `control_response` back (allow with the input as asked, or deny with a message).
+  Other control requests get an error answer so the turn never hangs; a `control_cancel_request`
+  or the process exiting drops the prompt. On Windows cancel kills the process tree with `taskkill /T`.
   Each send has a spawn id: a send for a conversation whose process is still running tree-kills it
   and drops its remaining events, and `lib.rs` kills every agent tree on `RunEvent::Exit`. The child
   never inherits `ENCRYPTION_KEY`, `DATABASE_URL` or `RESEND_API_KEY`, and Claude Code never gets

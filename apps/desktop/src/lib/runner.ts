@@ -15,6 +15,7 @@ import {
 } from '@lyfestyle/shared';
 import { ApiError, describeError, type Api, type ApiAgentConfig, type ApiClaim } from './api';
 import { activeHarness, fromCodex, harnessCommand } from './harness';
+import { clearAgent, handleControl } from './permissions';
 import { call, isTauri } from './tauri';
 import { useData } from '../store/data';
 
@@ -387,6 +388,7 @@ export function handleRunEvent(p: { conversation_id: string; kind: string; line:
     const run = active.get(id);
     if (!run) return;
     if (p.kind === 'exit') {
+        clearAgent(id);
         void finish(id, Number(p.line));
         return;
     }
@@ -405,6 +407,19 @@ export function handleRunEvent(p: { conversation_id: string; kind: string; line:
         return;
     }
     if (!isRecord(obj)) return;
+    // The conversation shows the prompt; the run log only notes that one was asked.
+    const control = handleControl(id, run.claim.run.conversationId ?? id, obj);
+    if (control) {
+        if (control.kind === 'request')
+            push(id, [
+                {
+                    type: 'log',
+                    level: 'info',
+                    message: `Asked to use ${control.request.tool}`.slice(0, 2000),
+                },
+            ]);
+        return;
+    }
     for (const line of fromCodex(obj, run.model) ?? [obj]) {
         if (line.type === 'system') run.started = true;
         if (line.type === 'assistant') {

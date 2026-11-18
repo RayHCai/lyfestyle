@@ -24,7 +24,7 @@ Either way the agent gets the same tools, from `mcp.json` in the data folder (pa
 - `lyfestyle`: the app itself run as `lyfestyle --mcp --data-dir <data folder>`, a stdio MCP server with `pages_*` tools over your documents. The app re-reads them when a turn ends.
 - `todo`: your todo app's MCP server, when Settings has its URL (`…/mcp/<secret>`), else `LYFESTYLE_TODO_MCP_URL` from the environment (dev builds also read it from the repo-root `.env`).
 
-Claude Code is started with `--allowedTools mcp__lyfestyle,mcp__todo`, since print mode cannot ask for permission. In API mode the runner supplies the API's own tools, and saving the todo URL registers it with the API as the `todo` server.
+Claude Code is started with `--allowedTools mcp__lyfestyle,mcp__todo`, so the app's own tools never ask. Anything else its permission rules do not allow, such as an edit outside the working directory, pauses the turn and shows an allow/deny prompt in the conversation. In API mode the runner supplies the API's own tools, and saving the todo URL registers it with the API as the `todo` server.
 
 The working directory for the agent defaults to the data folder so the agent can read your documents.
 
