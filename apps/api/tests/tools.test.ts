@@ -109,6 +109,15 @@ describe('MCP endpoint', () => {
 });
 
 describe('HTTP tools', () => {
+    it('documents ctx where an agent reading existing automations looks', async () => {
+        const items: { name: string; description: string }[] = (await t.call('GET', '/tools')).body
+            .items;
+        for (const name of ['automations_deploy', 'automations_get']) {
+            const tool = items.find((i) => i.name === name);
+            expect(tool?.description).toContain('ctx.agent(prompt, { budgetUsd?, model? })');
+        }
+    });
+
     it('lists and runs the same tools', async () => {
         const list = await t.call('GET', '/tools');
         const board = list.body.items.find(

@@ -1,5 +1,15 @@
 import { HELPERS, type GuideLimits } from './helpers.js';
 
+/**
+ * Every `ctx` helper with its options. The agent reads it in automations_deploy, and in
+ * automations_get too: an agent asked about existing code loads only the read tools, and without
+ * this it guesses what `ctx` accepts.
+ */
+export const ctxReference = (limits: GuideLimits) => `ctx:
+${HELPERS.map((h) => `- ${h.doc(limits)}`).join('\n')}
+- ctx.log(...), ctx.warn(...), ctx.error(...) (console.* too): kept with the run for debugging.
+- ctx.automation: { id, name, version, timezone, runId, trigger: 'schedule' | 'manual', startedAt }.`;
+
 /** How to write an automation, as the agent reads it in the automations_deploy tool. */
 export const automationGuide = (
     limits: GuideLimits,
@@ -17,10 +27,7 @@ export default async (ctx) => {
   return 'sent';
 };
 
-ctx:
-${HELPERS.map((h) => `- ${h.doc(limits)}`).join('\n')}
-- ctx.log(...), ctx.warn(...), ctx.error(...) (console.* too): kept with the run for debugging.
-- ctx.automation: { id, name, version, timezone, runId, trigger: 'schedule' | 'manual', startedAt }.
+${ctxReference(limits)}
 
 The code runs in its own Node process with no environment variables and no secrets. It can use fetch and the network, timers, and node: built-ins that do not touch the disk or other processes (node:crypto, node:url, node:buffer, ...). It cannot read or write files (node:fs throws ERR_ACCESS_DENIED), start processes or worker threads, load native addons, import npm packages or relative paths, or signal other processes. ctx is its only way to Lyfestyle's data. Memory is capped at 256 MB.
 

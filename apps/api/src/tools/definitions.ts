@@ -1,6 +1,6 @@
 import { isoDate } from '@lyfestyle/shared';
 import { z } from 'zod';
-import { automationGuide } from '../automations/guide.js';
+import { automationGuide, ctxReference } from '../automations/guide.js';
 import { deployStatus } from '../automations/schema.js';
 import type { AutomationsService } from '../automations/service.js';
 import type { Canvas } from '../integrations/canvas.js';
@@ -187,15 +187,16 @@ function automationTools({ automations, limits }: ToolDeps): Tool[] {
         defineTool({
             name: 'automations_list',
             description:
-                'List automations: approved code the Lyfestyle server runs on a cron schedule, with their next and last runs.',
+                'List automations: approved code the Lyfestyle server runs on a cron schedule, with their next and last runs. automations_get shows one with the ctx API its code can use.',
             input: z.object({}),
             readOnly: true,
             run: () => automations.list(),
         }),
         defineTool({
             name: 'automations_get',
-            description:
-                'Read one automation: its deployed code, its state, and its recent runs with logs, errors and cost.',
+            description: `Read one automation: its deployed code, its state, and its recent runs with logs, errors and cost. Changes go through automations_deploy, whose description is the full guide.
+
+The code's ${ctxReference(limits)}`,
             input: z.object({ id }),
             readOnly: true,
             run: ({ id }) => automations.get(id),
