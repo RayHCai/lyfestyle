@@ -54,6 +54,11 @@ runner takes only its share. For each run a runner gives Claude Code:
   edits the same file in Settings and gives it to its local Claude Code with
   `--append-system-prompt-file`, so every agent path follows it
 
+The desktop app's own Claude Code (local mode, and the chat runs it claims) differs in one way: it runs with
+`--permission-prompt-tool stdio`, so a tool call that needs permission pauses the turn and shows
+an allow/deny prompt in the conversation instead of failing. The cloud runner has nobody to ask
+and keeps `dontAsk`.
+
 Usage is recorded per run from the SDK's `modelUsage`. A resumed session's figures continue from
 the totals its transcript saved, so the runner subtracts what the session already recorded; figures
 below that baseline mean the transcript saved none and count as this run's own. Claude Code's
