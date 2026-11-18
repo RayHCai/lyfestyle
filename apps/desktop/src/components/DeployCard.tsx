@@ -118,7 +118,8 @@ export default function DeployCard({
     );
 }
 
-/** The approval prompt under the chat message where the agent proposed deploy `id`. */
+/** The approval prompt under the chat message where the agent proposed deploy `id`. A rejected
+ *  deploy leaves nothing behind; an approved one stays as its one-line record. */
 export function DeployPrompt({ id }: { id: string }) {
     // Whether the deploy is in the store's pending list: it flips when the deploy is decided
     // anywhere, the Automations page included, which is the one time to fetch it again.
@@ -139,9 +140,12 @@ export function DeployPrompt({ id }: { id: string }) {
         // oxlint-disable-next-line react/exhaustive-effect-dependencies -- `pending` flipping is the cue to fetch again
     }, [attempt, id, pending]);
 
+    if (deploy?.status === 'rejected' && !problem) return null;
     return (
         <div className="deploy-prompt">
-            {deploy && <DeployCard deploy={deploy} attempt={attempt} />}
+            {deploy && deploy.status !== 'rejected' && (
+                <DeployCard deploy={deploy} attempt={attempt} />
+            )}
             {problem && <div className="err select-text">{problem}</div>}
         </div>
     );

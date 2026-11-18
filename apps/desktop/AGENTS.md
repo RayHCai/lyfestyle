@@ -62,8 +62,8 @@ Verify UI changes with `typecheck`, `test`, `lint:rust`, `test:rust` and screens
   There is no create or edit form; do not add one. Local mode shows only a note. The same deploy card
   (`components/DeployCard.tsx`) is the approval prompt in a conversation: `lib/remote.ts` pairs
   each `automations_deploy` tool call with its result, sets the deploy id on the message
-  (`Message.deploys`), and `Conversation.tsx` renders a `DeployPrompt` for it. A decided deploy
-  shrinks to one line.
+  (`Message.deploys`), and `Conversation.tsx` renders a `DeployPrompt` for it. An approved deploy
+  shrinks to one line; a rejected one disappears from the chat.
   PageViews is API-only and read-only: it reads `GET /metrics/views/summary` once grouped by
   origin (the table: one row per site, never per path) and once per site grouped by day in the
   user's time zone (`components/ViewsChart.tsx`, a column per day with a hover tooltip), for the
