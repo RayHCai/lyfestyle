@@ -98,16 +98,16 @@ app's in-app runner claims only chat turns.
    `[runner] railway taking automation runs from …`.
 2. Set variables:
 
-    | Variable              | Value                                                                    |
-    | --------------------- | ------------------------------------------------------------------------ |
-    | `LYFESTYLE_API_URL`   | `https://${{api.RAILWAY_PUBLIC_DOMAIN}}`                                 |
-    | `LYFESTYLE_API_TOKEN` | `${{api.API_TOKEN}}`                                                     |
-    | `ANTHROPIC_API_KEY`   | An Anthropic API key. Automation agent runs are billed to it.            |
-    | `RUNNER_KINDS`        | `automation`                                                             |
-    | `RUNNER_ID`           | `railway`: shown as the runner on each agent run in the app              |
-    | `TZ`                  | Your IANA time zone, e.g. `America/Chicago`: the agent's idea of "today" |
-    | `AGENT_MODEL`         | Optional Claude model id                                                 |
-    | `RUNNER_CONCURRENCY`  | Optional; 1 by default                                                   |
+    | Variable              | Value                                                                      |
+    | --------------------- | -------------------------------------------------------------------------- |
+    | `LYFESTYLE_API_URL`   | `https://${{api.RAILWAY_PUBLIC_DOMAIN}}`                                   |
+    | `LYFESTYLE_API_TOKEN` | `${{api.API_TOKEN}}`                                                       |
+    | `ANTHROPIC_API_KEY`   | An Anthropic API key. Automation agent runs are billed to it.              |
+    | `RUNNER_KINDS`        | `automation`                                                               |
+    | `RUNNER_ID`           | `railway`: shown as the runner on each agent run in the app                |
+    | `TZ`                  | Your IANA time zone, e.g. `America/Chicago`: the agent's idea of "today"   |
+    | `AGENT_MODEL`         | Optional default Claude model; `ctx.agent(prompt, { model })` overrides it |
+    | `RUNNER_CONCURRENCY`  | Optional; 1 by default                                                     |
 
     (`api` is the API service's name in Railway; use yours.)
 

@@ -119,10 +119,12 @@ Dates are the user's local calendar days, `YYYY-MM-DD`; the server never guesses
 | `POST /runs/:id/cancel`                                    | Drops a queued run; asks a running one to stop.                                                                                                                                                                                                                       |
 
 A run is `{ id, kind: 'chat' | 'automation', status, prompt, conversationId, automationRunId,
-budgetUsd, runnerId, harness, output, error, createdAt, startedAt, finishedAt, … }` with status
+budgetUsd, model, runnerId, harness, output, error, createdAt, startedAt, finishedAt, … }` with status
 `queued → running → succeeded | failed | cancelled`. A run whose runner stops heartbeating for
 `RUN_STALE_AFTER_MS` (two minutes by default) is failed. `budgetUsd` is at most `RUN_BUDGET_USD`
-($5 by default). Once the run's reported usage passes it, the API asks the runner to stop. The
+($5 by default). Once the run's reported usage passes it, the API asks the runner to stop.
+`model` is the Claude model automation code asked for with `ctx.agent(prompt, { model })` (an
+alias such as `sonnet` or a full id), or null; a runner uses it over its own `AGENT_MODEL`. The
 agent runs of one automation run share one `RUN_BUDGET_USD`: once together they pass it, every one
 still running gets `cancelRequested` and queued ones are cancelled.
 
