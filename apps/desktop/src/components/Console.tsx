@@ -219,7 +219,7 @@ export default function Console() {
             setSel((s) => Math.min(items.length - 1, s + 1));
         } else if (e.key === 'ArrowUp') {
             e.preventDefault();
-            setSel((s) => Math.max(0, s - 1));
+            setSel((s) => (s === 0 ? Math.max(0, items.length - 1) : s - 1));
         } else if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
             e.preventDefault();
             const it = items[sel];
