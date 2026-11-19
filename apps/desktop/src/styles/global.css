@@ -867,6 +867,7 @@ kbd {
 .row {
     display: flex;
     align-items: center;
+    padding: 0 12px;
     border-bottom: var(--dash);
     counter-increment: row;
     animation: rise 0.3s var(--ease) both;
@@ -1655,6 +1656,9 @@ select {
     height: 1px;
 }
 .switch i {
+    /* `[ on ]` is a character shorter than `[ off ]`; hold the width so toggling does not shift. */
+    display: inline-block;
+    min-width: 7ch;
     font-style: normal;
     white-space: pre;
     color: var(--faint);
@@ -1667,7 +1671,7 @@ select {
     color: var(--accent);
 }
 .switch input:checked + i::before {
-    content: '[ on  ]';
+    content: '[ on ]';
 }
 .switch input:focus-visible + i {
     outline: 1px dashed var(--ink);
@@ -1996,58 +2000,58 @@ select {
     color: var(--text2);
     font-size: 13px;
 }
+/* Replaces approve/reject once decided: a dot, the phase, and a bar across the rest of the line
+   that sweeps while the request is in flight and fills when it lands. */
+.deploy-status {
+    display: flex;
+    align-items: center;
+    gap: 1ch;
+    font-size: 13px;
+    color: var(--muted);
+    animation: fade 0.16s var(--ease);
+}
+.deploy-status i {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--hair);
+    flex: none;
+}
+.deploy-status.live i {
+    background: var(--accent);
+    animation: blink 1s steps(2) infinite;
+}
+.deploy-status.done {
+    color: var(--ink);
+}
+.deploy-status.done i {
+    background: var(--ok);
+}
+.deploy-status::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    margin-left: 1ch;
+    border-top: var(--dash);
+    background: linear-gradient(var(--ink), var(--ink)) no-repeat -30% 0 / 30% 2px;
+    background-origin: border-box;
+}
+.deploy-status.live::after {
+    animation: sweep 1.2s var(--ease) infinite;
+}
+.deploy-status.done::after {
+    border-top: 1px solid var(--ink);
+    background: none;
+}
+@keyframes sweep {
+    to {
+        background-position: 130% 0;
+    }
+}
 .code {
     margin: 10px 0 12px;
     padding: 10px 12px;
     max-height: 360px;
-    /* Replaces approve/reject once decided: a dot, the phase, and a bar across the rest of the line
-   that sweeps while the request is in flight and fills when it lands. */
-    .deploy-status {
-        display: flex;
-        align-items: center;
-        gap: 1ch;
-        font-size: 13px;
-        color: var(--muted);
-        animation: fade 0.16s var(--ease);
-    }
-    .deploy-status i {
-        width: 7px;
-        height: 7px;
-        border-radius: 50%;
-        background: var(--hair);
-        flex: none;
-    }
-    .deploy-status.live i {
-        background: var(--accent);
-        animation: blink 1s steps(2) infinite;
-    }
-    .deploy-status.done {
-        color: var(--ink);
-    }
-    .deploy-status.done i {
-        background: var(--ok);
-    }
-    .deploy-status::after {
-        content: '';
-        flex: 1;
-        height: 1px;
-        margin-left: 1ch;
-        border-top: var(--dash);
-        background: linear-gradient(var(--ink), var(--ink)) no-repeat -30% 0 / 30% 2px;
-        background-origin: border-box;
-    }
-    .deploy-status.live::after {
-        animation: sweep 1.2s var(--ease) infinite;
-    }
-    .deploy-status.done::after {
-        border-top: 1px solid var(--ink);
-        background: none;
-    }
-    @keyframes sweep {
-        to {
-            background-position: 130% 0;
-        }
-    }
     overflow: auto;
     background: var(--bg-2);
     border: var(--dash);
