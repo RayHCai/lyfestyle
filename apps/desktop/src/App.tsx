@@ -21,6 +21,8 @@ import Automations from './pages/Automations';
 import PageViews from './pages/PageViews';
 import SettingsPage from './pages/Settings';
 import SignIn from './pages/SignIn';
+import Mobile, { MobileSignIn } from './pages/Mobile';
+import { useMobile } from './lib/mobile';
 
 /** Below this width the rail would crowd the page, so the sidebar becomes a drawer. */
 const COMPACT = '(max-width: 900px)';
@@ -38,6 +40,8 @@ export default function App() {
     const setCompact = useApp((s) => s.setCompact);
     const notice = useData((s) => s.notice);
     const notify = useData((s) => s.notify);
+    /** The web build on a phone: documents only (`pages/Mobile.tsx`). Never true in the desktop app. */
+    const mobile = useMobile();
     /** Why startup failed (an unreadable data folder, say), shown with a retry. */
     const [failed, setFailed] = useState<string | null>(null);
     /** Bumped by that retry, which starts over. */
@@ -181,6 +185,8 @@ export default function App() {
             </div>
         );
     // The web build has no local files to fall back on, so it shows nothing until signed in.
+    if (isWeb && mode !== 'api' && mobile)
+        return <MobileSignIn>{ready && <SignIn />}</MobileSignIn>;
     if (isWeb && mode !== 'api')
         return (
             <div className={shell}>
@@ -188,6 +194,7 @@ export default function App() {
                 <main className="view">{ready && <SignIn />}</main>
             </div>
         );
+    if (mobile) return ready ? <Mobile /> : <div className="m-app" />;
     return (
         <div className={shell}>
             <Titlebar />

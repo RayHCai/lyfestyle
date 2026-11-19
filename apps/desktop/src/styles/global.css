@@ -2772,3 +2772,275 @@ select {
         opacity: 1;
     }
 }
+
+/* Phone layout (the web build at phone widths, `pages/Mobile.tsx`): documents only, one screen at
+   a time. A status line across the top like the titlebar, then the screen scrolling under it.
+   There is no 80% zoom here, so type runs 15-16px, and fields stay at 16px because iOS zooms into
+   anything smaller. Rows are at least 44px tall to be tapped. Insets keep clear of notches. */
+.m-app {
+    --m-left: max(16px, env(safe-area-inset-left));
+    --m-right: max(16px, env(safe-area-inset-right));
+    position: relative;
+    height: 100%;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    font-size: 15px;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+}
+.m-screen {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+.m-screen.enter {
+    animation: slide 0.22s var(--ease) both;
+}
+.m-bar {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 2ch;
+    height: calc(48px + env(safe-area-inset-top));
+    padding: env(safe-area-inset-top) var(--m-right) 0 var(--m-left);
+    border-bottom: var(--dash);
+}
+.m-brand .wordmark {
+    height: 18px;
+}
+.m-fill {
+    flex: 1;
+}
+.m-act,
+.m-back,
+.m-bar .btn {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    font-size: 15px;
+}
+.m-back {
+    padding-right: 2ch;
+    color: var(--muted);
+}
+.m-back:active,
+.m-act:active {
+    color: var(--ink);
+}
+.m-unsynced,
+.m-crumb {
+    font-size: 12px;
+    color: var(--faint);
+}
+.m-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    padding-bottom: calc(48px + env(safe-area-inset-bottom));
+}
+.m-search {
+    display: flex;
+    align-items: center;
+    gap: 1ch;
+    margin: 12px var(--m-right) 0 var(--m-left);
+    border-bottom: var(--dash);
+    color: var(--hair);
+    transition: border-color 0.2s;
+}
+.m-search:focus-within {
+    border-bottom: 1px solid var(--ink-strong);
+}
+.m-search input {
+    flex: 1;
+    min-width: 0;
+    padding: 10px 0;
+    font-size: 16px;
+    border-radius: 0;
+    outline: 0;
+    appearance: none;
+}
+.m-search input::placeholder {
+    color: var(--ghost);
+}
+.m-search input::-webkit-search-cancel-button {
+    appearance: none;
+}
+.m-rows {
+    margin: 12px 0 0;
+    padding: 0;
+    list-style: none;
+    border-top: var(--dash);
+}
+.m-rows > li {
+    animation: rise 0.3s var(--ease) both;
+    animation-delay: min(calc(sibling-index() * 20ms), 160ms);
+}
+.m-row {
+    display: grid;
+    grid-template-columns: 2ch minmax(0, 1fr) auto;
+    align-items: baseline;
+    column-gap: 0;
+    width: 100%;
+    min-height: 56px;
+    padding: 14px var(--m-right) 14px var(--m-left);
+    border-bottom: var(--dash);
+    color: var(--ink);
+    transition: background 0.12s;
+}
+.m-row::before {
+    content: '>';
+    color: var(--hair);
+}
+.m-row:active {
+    background: var(--active);
+}
+.m-row .t {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 16px;
+}
+.m-row .m {
+    padding-left: 2ch;
+    font-size: 12px;
+    color: var(--faint);
+}
+.m-trashed .t {
+    color: var(--muted);
+}
+.m-trashed .ex {
+    grid-column: 2 / -1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    color: var(--faint);
+}
+.m-trashed .btn {
+    grid-column: 2;
+    justify-self: start;
+    min-height: 36px;
+    margin-top: 4px;
+}
+.m-empty {
+    padding: 20px var(--m-right) 0 var(--m-left);
+}
+.m-foot {
+    display: flex;
+    gap: 3ch;
+    padding: 24px var(--m-right) 0 var(--m-left);
+}
+.m-foot .plus {
+    min-height: 44px;
+    font-size: 13px;
+}
+.m-read .m-foot {
+    margin-top: 32px;
+    padding-inline: 0;
+    border-top: var(--dash);
+}
+.m-delete:active {
+    color: var(--danger);
+}
+.m-notice {
+    position: absolute;
+    left: var(--m-left);
+    right: var(--m-right);
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    z-index: 40;
+    margin: 0;
+    box-shadow: 0 16px 40px -20px rgba(55, 53, 47, 0.35);
+}
+/* The reader: rendered markdown set for reading, with room between blocks and scaled headings. */
+.m-read {
+    max-width: 68ch;
+    padding: 20px var(--m-right) 0 var(--m-left);
+}
+.m-title {
+    margin: 0 0 18px;
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+    color: var(--ink-strong);
+    overflow-wrap: anywhere;
+}
+.m-title .hash {
+    font-size: inherit;
+    line-height: inherit;
+}
+.m-read .md {
+    font-size: 15px;
+    line-height: 1.65;
+    overflow-wrap: break-word;
+}
+.m-read .md :is(p, ul, ol, pre, blockquote, table) {
+    margin-bottom: 14px;
+}
+.m-read .md :is(h1, h2, h3, h4) {
+    margin: 26px 0 8px;
+    line-height: 1.35;
+}
+.m-read .md h1 {
+    font-size: 20px;
+}
+.m-read .md h2 {
+    font-size: 17px;
+}
+.m-read .md ol {
+    padding-left: 3ch;
+}
+.m-read .md li + li {
+    margin-top: 4px;
+}
+.m-read .md code {
+    font-size: 14px;
+}
+.m-read .md pre {
+    font-size: 13px;
+}
+.m-read .md table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+}
+.m-read .md .code-copy {
+    opacity: 1;
+}
+/* The desktop editor, fitted to the phone. */
+.m-edit .docs-editor {
+    padding: 20px var(--m-right) 0 var(--m-left);
+    overflow: visible;
+}
+.m-edit .doc-title,
+.m-edit .hash {
+    font-size: 24px;
+    line-height: 1.3;
+}
+.m-edit .doc-body .bn-default-styles {
+    font-size: 16px;
+}
+.m-edit .bn-editor {
+    line-height: 1.6;
+}
+/* BlockNote 0.56 marks a heading's level only by its tag, not a `data-level`. */
+.m-edit .bn-editor .bn-block-content[data-content-type='heading']:has(> h1) {
+    --level: 22px;
+}
+.m-edit .bn-editor .bn-block-content[data-content-type='heading']:has(> h2) {
+    --level: 18px;
+}
+.m-edit .bn-editor .bn-block-content[data-content-type='heading']:has(> h3) {
+    --level: 16px;
+}
+.m-signin .page {
+    padding: 24px var(--m-right) 0 var(--m-left);
+    overflow: visible;
+}
+.m-signin .field input {
+    font-size: 16px;
+}

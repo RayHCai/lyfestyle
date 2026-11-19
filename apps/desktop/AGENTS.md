@@ -20,6 +20,21 @@ in API mode it talks to `apps/api`, follows runs over SSE, and is itself a runne
   runner is hosted; `storage.ts` keeps everything but `settings.json` and `token.json` in memory,
   so nothing is cached offline. Touch screens (`hover: none`) always
   show hover-only actions.
+- The web build is also an installable PWA for phones. At phone widths (`MOBILE_QUERY` in
+  `lib/mobile.ts`) `App.tsx` renders `pages/Mobile.tsx` instead of the shell: documents only, one
+  screen at a time (list with a title filter, reader, editor, trash), no titlebar, rail, tabs or
+  console. Documents open in the reader (the `Markdown` component); `edit` swaps in the desktop
+  `Editor` with `touch` (no side menu). Each screen is a `history` entry (`readEntry`/`writeEntry`
+  validate it, since it survives a reload), so the back gesture steps through them; `page:` links
+  still go through `navigate`, which the phone layout turns into opening that document. It runs
+  `refresh` on every `visibilitychange`, so edits are pushed before a phone can kill the hidden
+  app. `MOBILE_CAPABLE` is false outside `--mode web` and screenshot mode, so the desktop app
+  never shows it; check it in screenshot mode in a phone-sized browser window. The `lyfestyle-pwa` plugin in
+  `vite.config.ts` adds the manifest, icons and viewport tags to `--mode web` only;
+  `public/manifest.webmanifest`, `public/icons/` (copies of the Tauri icons) and `public/sw.js`,
+  which `main.tsx` registers in production web builds. The worker caches the app shell (pages
+  network-first, hashed `/assets/` cache-first, capped) and never touches cross-origin requests,
+  so API data is never cached by it.
 - `pnpm --filter @lyfestyle/desktop typecheck` (`tsc -b`); `build` = `tsc -b && vite build`.
 - Screenshot mode, inside `apps/desktop`: `pnpm exec vite --mode screenshot`, then open
   `http://localhost:1420/#seed&view=documents` (also `#seed&sidebar`, `#seed&console`,

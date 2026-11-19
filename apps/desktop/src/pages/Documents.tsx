@@ -19,7 +19,7 @@ import { TRASH_DAYS, type TrashedDoc } from '../lib/types';
 import { confirmAction } from '../components/Confirm';
 
 /** Whole days until the API purges a trashed document; 0 in its last day. */
-const daysLeft = (deletedAt: number, now = Date.now()) =>
+export const daysLeft = (deletedAt: number, now = Date.now()) =>
     Math.max(0, Math.floor((deletedAt + TRASH_DAYS * DAY_MS - now) / DAY_MS));
 
 function TrashPane({ doc, onRestore }: { doc: TrashedDoc; onRestore: () => void }) {
@@ -46,9 +46,10 @@ function TrashPane({ doc, onRestore }: { doc: TrashedDoc; onRestore: () => void 
 /**
  * One document. Edits save after a pause; a save that fails keeps the text in the editor and
  * offers a retry, and nothing is marked edited until a save succeeds. A pending save runs early
- * when the store reloads or syncs, and when the editor closes.
+ * when the store reloads or syncs, and when the editor closes. `touch` drops BlockNote's side
+ * menu, whose drag handle appears on hover and so only takes room on a phone.
  */
-function Editor({ id }: { id: string }) {
+export function Editor({ id, touch = false }: { id: string; touch?: boolean }) {
     const meta = useData((s) => s.docs.find((d) => d.id === id));
     const readDoc = useData((s) => s.readDoc);
     const writeDoc = useData((s) => s.writeDoc);
@@ -174,6 +175,7 @@ function Editor({ id }: { id: string }) {
                         >
                     }
                     theme="light"
+                    sideMenu={!touch}
                     // Until the text is in, typing would be lost when it arrives.
                     editable={loaded}
                     onChange={() => {
