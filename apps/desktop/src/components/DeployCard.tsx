@@ -16,6 +16,14 @@ const origins: Partial<Record<ApiAutomationDeploy['origin'], { text: string; war
     user: { text: 'Proposed directly.', warn: false },
 };
 
+/** The status line that replaces the buttons once the user decides. */
+const phases = {
+    approving: { text: 'deploying…', live: true },
+    rejecting: { text: 'rejecting…', live: true },
+    approved: { text: 'deployed', live: false },
+    rejected: { text: 'rejected', live: false },
+};
+
 /**
  * A proposed automation deploy: the code (as a diff against the deployed version) with approve
  * and reject. Once decided it shrinks to one line. Shown on the Automations page and in the chat
@@ -31,7 +39,9 @@ export default function DeployCard({
     onDecided?: () => Promise<void>;
 }) {
     const decide = useData((s) => s.decideDeploy);
-    const [busy, setBusy] = useState(false);
+    // Where a decision is: in flight, or made and waiting for the card to be re-fetched as
+    // decided. Null shows the approve and reject buttons.
+    const [phase, setPhase] = useState<keyof typeof phases | null>(null);
 
     if (d.status !== 'pending')
         return (
@@ -64,9 +74,13 @@ export default function DeployCard({
             !(await confirmAction(`Reject "${d.name}"? The proposed code is discarded.`, 'Reject'))
         )
             return;
-        setBusy(true);
-        await attempt(() => decide(d.id, approve));
-        setBusy(false);
+        setPhase(approve ? 'approving' : 'rejecting');
+        const ok = await attempt(() => decide(d.id, approve));
+        if (!ok) {
+            setPhase(null);
+            return;
+        }
+        setPhase(approve ? 'approved' : 'rejected');
         await onDecided?.();
     };
 
@@ -106,14 +120,21 @@ export default function DeployCard({
             ) : (
                 <pre className="code select-text">{d.code}</pre>
             )}
-            <div className="actions">
-                <button className="btn" disabled={busy} onClick={() => void act(true)}>
-                    approve and deploy
-                </button>
-                <button className="btn danger" disabled={busy} onClick={() => void act(false)}>
-                    reject
-                </button>
-            </div>
+            {phase ? (
+                <output className={'deploy-status ' + (phases[phase].live ? 'live' : 'done')}>
+                    <i />
+                    {phases[phase].text}
+                </output>
+            ) : (
+                <div className="actions">
+                    <button className="btn" onClick={() => void act(true)}>
+                        approve and deploy
+                    </button>
+                    <button className="btn danger" onClick={() => void act(false)}>
+                        reject
+                    </button>
+                </div>
+            )}
         </article>
     );
 }
