@@ -25,7 +25,7 @@ import { Editor, daysLeft } from './Documents';
  * The phone layout: documents only, one screen at a time (list, reader or editor, trash). Every
  * screen is a history entry, so the system back gesture steps back through them, and a reload
  * lands on the same screen. Documents open in the reader, which is plain markdown and needs no
- * editor; `edit` swaps in the same BlockNote editor as the desktop.
+ * editor; tapping the text swaps in the same BlockNote editor as the desktop.
  */
 const useRoute = create<{ entry: MobileEntry; query: string }>(() => ({
     entry: readEntry(window.history.state),
@@ -236,7 +236,16 @@ function Reader({ doc, onEdit }: { doc: DocMeta; onEdit: () => void }) {
             )}
             {text !== null &&
                 (text.trim() ? (
-                    <Markdown text={text} />
+                    // Tapping the text opens the editor; links and buttons inside keep their own action.
+                    // oxlint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- a phone-only tap target; the text stays selectable and readable
+                    <div
+                        className="m-tap"
+                        onClick={(e) => {
+                            if (!(e.target as HTMLElement).closest('a, button')) onEdit();
+                        }}
+                    >
+                        <Markdown text={text} />
+                    </div>
                 ) : (
                     <div className="empty-stage">
                         <p className="empty">Nothing here yet.</p>
@@ -263,9 +272,11 @@ function DocScreen({ doc, edit }: { doc: DocMeta; edit: boolean }) {
             <header className="m-bar">
                 <Back />
                 <span className="m-fill" />
-                <button className="btn" onClick={toggle}>
-                    {edit ? 'done' : 'edit'}
-                </button>
+                {edit && (
+                    <button className="btn" onClick={toggle}>
+                        done
+                    </button>
+                )}
             </header>
             <div className={'m-scroll' + (edit ? ' m-edit' : '')}>
                 {edit ? (
