@@ -3044,3 +3044,15 @@ select {
 .m-signin .field input {
     font-size: 16px;
 }
+
+/* An empty document's placeholder is itself the tap target that opens the editor. */
+.m-tap-empty {
+    display: block;
+    width: 100%;
+    padding: 24px 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    text-align: left;
+    cursor: text;
+}

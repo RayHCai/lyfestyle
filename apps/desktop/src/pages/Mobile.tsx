@@ -247,12 +247,9 @@ function Reader({ doc, onEdit }: { doc: DocMeta; onEdit: () => void }) {
                         <Markdown text={text} />
                     </div>
                 ) : (
-                    <div className="empty-stage">
-                        <p className="empty">Nothing here yet.</p>
-                        <button className="btn" onClick={onEdit}>
-                            write
-                        </button>
-                    </div>
+                    <button className="empty m-tap-empty" onClick={onEdit}>
+                        Nothing here yet.
+                    </button>
                 ))}
             <footer className="m-foot">
                 <button className="plus m-delete" onClick={() => void remove()}>
